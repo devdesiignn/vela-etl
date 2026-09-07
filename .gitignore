@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Environment / secrets
+.env
+.env.*
+*.local
+
+# Logs
+*.log
+
+# Dependency/build directories (uncomment or extend once the stack is chosen)
+# node_modules/
+# __pycache__/
+# venv/
+# dist/
+# build/
