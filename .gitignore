@@ -21,3 +21,9 @@ Thumbs.db
 # venv/
 # dist/
 # build/
+
+# Locally installed agent skills (installed via `npx skills add`, not project source).
+# .claude/skills/ is a symlink into .agents/skills/ on this machine. Committing it
+# would duplicate every file, since core.symlinks is false here.
+.agents/
+.claude/
