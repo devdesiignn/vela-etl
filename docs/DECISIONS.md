@@ -1,0 +1,35 @@
+# Engineering Decisions
+
+A running log of the non-obvious choices made building this repo, and why. Design/architecture reasoning lives in [`docs/design/DESIGN-V3.md`](./design/DESIGN-V3.md). This log covers the choices that had a real rejected alternative worth recording.
+
+## Language
+
+**Python for the whole pipeline (Extract, Transform, Load), not TypeScript.** TypeScript was the original draft assumption, made before Extract's real requirements were worked out. The team reversed this once it became clear Extract carries the pipeline's actual complexity and compute cost: OCR, vision-LLM calls, per-vendor adapters. Python's OCR/ML ecosystem is native and mature there — EasyOCR, PaddleOCR, docTR, and `pytesseract` all run in-process. The TypeScript equivalents are thin or nonexistent and would need a separate Python service anyway. Once Extract needs Python, keeping Transform and Load in the same language avoids a cross-language boundary for stages that don't need one. Neither stage has any real technical pull toward TypeScript.
+
+## Architecture
+
+**No direct database connection to `receipt-core`, ever.** Originally the team assumed `receipt-etl` would connect directly to Postgres. `receipt-core` looked like schema and migrations only, not a running service. The team reversed this once the platform's write-path rule became explicit. `receipt-api` is the only service with a direct connection to `receipt-core`. `receipt-etl` has no DB driver and no DB credentials. It calls `receipt-api` over HTTP instead.
+
+**Contract with `receipt-api` is two separate things: data shape (JSON Schema) and endpoint shape (OpenAPI).** The team considered generating types from an OpenAPI spec directly. This is the way a typical REST client generator would work. Rejected. The data types already come from `receipt-core`'s JSON Schema via `datamodel-code-generator`, independent of anything `receipt-api` does. An OpenAPI spec, if `receipt-api` ever publishes one, only ever describes the URL, method, and wrapper around that same data. There is nothing left for a second code-generation step to produce. This also means `receipt-etl` never needs to know or mirror any tooling choice made on `receipt-api`'s side.
+
+**`receipt-api`'s write contract: one combined-payload endpoint, not per-table endpoints.** The team considered `POST /receipts`, `POST /line-items`, and `POST /extraction-reviews` as three separate calls, more conventionally REST-ish. Rejected in favor of a single POST carrying the whole shaped receipt with nested line_items and reviews, written atomically. Reasoning: `receipt-etl`'s Emit step already bundles all three into one unit. Per-table endpoints would mean re-splitting output on the way out for no benefit. Per-table calls also risk partial-write states — receipt written, line_items call fails, review call never happens — that a combined endpoint avoids by construction. This is `receipt-etl`'s stated expectation handed to `receipt-api`, not a guarantee of `receipt-api`'s actual implementation.
+
+**Both `receipt-etl` and `receipt-api` validate against `receipt-core`'s JSON Schema — not just one side.** The team considered leaving validation to `receipt-api` alone. It is the actual enforcement point and the single source of truth either way. Rejected purity for practicality. `receipt-etl` validates first, so a malformed payload fails fast with a useful local error during development, before a request ever leaves the pipeline. `receipt-api` re-validates on receipt regardless, since it can't fully trust every caller, especially once other clients might exist. `receipt-etl`'s check is an optimization, never the enforcement mechanism.
+
+## Privacy
+
+**No anonymization or redaction: confirmed, not left open.** v1 flagged two fields as needing confirmation: `receipts.customer_name` and `extras`. They needed to never hold a third party's personal data. Confirmed: this is a local project processing only the project owner's own receipts, with no third-party exposure path. The decision stands as data minimization, meaning extract only what the schema defines, rather than redaction. This is consistent with the platform-wide privacy principle. If the team ever needs reversible redaction, field-level (not whole-row) encryption is the fallback design. The key stays separate from the data. Decryption is a permissioned, logged action.
+
+## Extraction
+
+**Extractors are a plain list behind one shared interface, not a "one extractor vs. many, with a special fallback case" branch.** The team considered a different model: a primary extractor plus an explicit fallback path. If the primary extractor is low-confidence, it would call a named backup. Rejected. Reconciliation only ever sees a results list of length 1 or N. It never knows or asks how many extractors ran, or why. This makes "run two extractors always" and "run one, conditionally fall back to a second" the exact same code path downstream. Adding a new vendor is purely additive, meaning one adapter and one config entry, with zero changes to orchestration or reconciliation.
+
+## Tooling (build phase)
+
+**uv, not poetry or plain pip.** Poetry is more established but slower, and it has its own `pyproject.toml` conventions to learn. Plain pip with `requirements.txt` has no real lockfile, so dependency versions can drift silently between installs. uv does venv, install, and lockfile as one fast tool. The team chose it for the fewest new concepts to learn on a from-scratch Python project.
+
+**`receipt-core`'s JSON Schema: vendored via git submodule.** Not a manual copy-and-sync script. Not a build-time fetch. A manual copy is the most self-contained option at runtime, needing no network access to build. But the pin exists only in human memory. Nothing stops the copy from silently drifting from `receipt-core`, and nothing records which commit it came from. A build-time fetch is the least self-contained, since every build needs live network access to `receipt-core`. A git submodule is the conventional git-native mechanism for exactly this situation. It gives a pinned, trackable snapshot of another repo's content, with the version relationship enforced by git rather than memory.
+
+**Both `respx` and a standalone FastAPI mock app for `receipt-api`, not `respx` alone.** `respx` is necessary either way. It is what gates fast, isolated automated tests. But it only exists inside a `pytest` run. It can't be pointed at manually. The standalone app costs more to build but lets the whole pipeline be run and inspected end-to-end before `receipt-api` exists for real.
+
+**`pre-commit` + `ruff`: matching `receipt-core`'s convention, not skipping local enforcement.** `receipt-core` runs eslint and prettier on staged files before every commit via Husky, with no CI. `receipt-etl` has no reason to diverge from that established cross-repo convention just because the language differs. `pre-commit` + `ruff` plays the same role — lint and format, enforced before a commit lands — using Python-native tooling.
