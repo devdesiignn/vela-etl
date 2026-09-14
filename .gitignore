@@ -15,12 +15,12 @@ Thumbs.db
 # Logs
 *.log
 
-# Dependency/build directories (uncomment or extend once the stack is chosen)
-# node_modules/
-# __pycache__/
-# venv/
-# dist/
-# build/
+# Dependency/build directories
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
 
 # Locally installed agent skills (installed via `npx skills add`, not project source).
 # .claude/skills/ is a symlink into .agents/skills/ on this machine. Committing it
