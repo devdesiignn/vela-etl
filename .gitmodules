@@ -1,0 +1,3 @@
+[submodule "vendor/receipt-core"]
+	path = vendor/receipt-core
+	url = https://github.com/devdesiignn/receipt-core.git
