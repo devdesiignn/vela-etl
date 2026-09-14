@@ -4,7 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Design is finalized. Implementation has not started yet. The full design is [`docs/design/DESIGN-V3.md`](docs/design/DESIGN-V3.md), authoritative and superseding V1/V2, which the repo keeps only for history. The build sequence is [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md). [`docs/DECISIONS.md`](docs/DECISIONS.md) logs non-obvious choices and their rejected alternatives. When implementation begins, update this file with real build, lint, and test commands, not aspirational ones.
+Design is finalized. Implementation is underway. Phase 1 (repo and schema foundation) is complete. Extract, Transform, and Load have not started. The full design is [`docs/design/DESIGN-V3.md`](docs/design/DESIGN-V3.md), authoritative and superseding V1/V2, which the repo keeps only for history. The build sequence is [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md). [`docs/DECISIONS.md`](docs/DECISIONS.md) logs non-obvious choices and their rejected alternatives.
+
+## Build, lint, and test
+
+Managed with [uv](https://docs.astral.sh/uv/). Named commands run via [`poethepoet`](https://github.com/nat-n/poethepoet) (`uv` has no built-in task runner), defined in `pyproject.toml`'s `[tool.poe.tasks]`:
+
+- `uv run poe bootstrap` — first-time setup from a fresh clone: populates `vendor/receipt-core` and generates Python types from its JSON Schema.
+- `uv run poe test` — run the test suite (`pytest`). Runs `bootstrap` first via `pretest`, so it's self-sufficient from a cold clone.
+- `uv run poe lint` — lint (`ruff check .`).
+- `uv run poe format` — format (`ruff format .`).
+- `uv run poe gen:types` — regenerate Python types from the vendored JSON Schema. Run after `submodule:update`.
+- `uv run poe submodule:init` / `uv run poe submodule:update` — populate the submodule at its pinned commit, or deliberately bump that pin.
+
+The importable package is `etl`, living at `src/etl/` (standard Python src-layout). `pre-commit` runs `ruff check --fix` and `ruff format` automatically on every commit — install it once per clone with `uv run pre-commit install`.
 
 ## What this repo is
 
