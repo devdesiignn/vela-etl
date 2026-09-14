@@ -97,7 +97,8 @@ receipt-etl/
 
 ## Phase 4 — Mock receipt-api & Load client _(depends on Phase 1, blocks nothing else)_
 
-- Sketch a minimal OpenAPI spec for the combined-payload write endpoint (receipt + nested line_items + reviews, atomic).
+- Sketch a minimal OpenAPI spec for the combined-payload write endpoint (store + receipt + nested line_items + reviews, atomic). `receipt-core`'s `docs/SCHEMA.md` states extraction writes to `stores` / `receipts` / `line_items`. The pipeline starts from a bare photo, with no pre-existing store row to reference. So `store` data belongs in the same payload, not assumed to already exist by `store_id` alone. `DESIGN-V3.md`'s Load section omits `store` from this list. Confirm and correct there too before finalizing the spec.
+- Decide how repeat stores get deduplicated. A given physical store issues many receipts over time. So the endpoint (or `receipt-api` itself) needs a rule for matching an extracted store against an existing `stores` row, not creating a duplicate row per receipt. Decide whether this match happens in `receipt-etl`'s Transform stage, in the Load payload shape, or entirely inside `receipt-api`. Confirmed against `receipt-core`'s migration: `stores` has no unique constraint at all today, on `name`, `address`, or any combination. So today, nothing stops a duplicate store row at the database level. This gap belongs to `receipt-core`, out of scope for this repo to correct. Note it here only so the dependency is not lost.
 - Build the standalone FastAPI mock app (`mock_api/`) implementing that spec — success path, "already exists" (duplicate `content_hash`) response, validation-error response.
 - Build the `httpx`-based Load client in `src/etl/load/` against the spec.
 - Unit tests via `respx`, mocking the same success/duplicate/validation-error paths.
