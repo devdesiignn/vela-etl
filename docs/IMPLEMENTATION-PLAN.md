@@ -22,19 +22,19 @@ This is why the team builds Load _early_ (Phase 4) against a mock, in parallel w
 
 ## Named commands
 
-`receipt-core` exposes every setup and build operation as a named `npm run <script>` in `package.json`. The developer never has to remember a bare shell command. `receipt-etl` matches this via `pyproject.toml`'s `[tool.uv.scripts]`, uv's task-runner equivalent, invoked as `uv run <script>`:
+`receipt-core` exposes every setup and build operation as a named `npm run <script>` in `package.json`. The developer never has to remember a bare shell command. `uv` has no built-in equivalent (no `[tool.uv.scripts]`), so `receipt-etl` matches the pattern via [`poethepoet`](https://github.com/nat-n/poethepoet), a task runner configured entirely in `pyproject.toml`'s `[tool.poe.tasks]` and invoked as `uv run poe <task>`:
 
-| Script             | Command                                                                                                                | Purpose                                                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `submodule:init`   | `git submodule update --init --recursive`                                                                              | First-time setup after cloning — populates `vendor/receipt-core` at its pinned commit                      |
-| `submodule:update` | `cd vendor/receipt-core && git fetch && git checkout <new-commit> && cd ../.. && git add vendor/receipt-core`          | Deliberately bump the pinned schema version. Stages the new submodule pointer for commit in `receipt-etl`. |
-| `gen:types`        | `datamodel-code-generator --input vendor/receipt-core/schemas --input-file-type jsonschema --output receipt_etl/types` | Regenerate Python types from the vendored JSON Schema. Run after `submodule:update`, or on first setup.    |
-| `bootstrap`        | `uv run submodule:init && uv run gen:types`                                                                            | Single command from a cold clone to a working local setup — mirrors `receipt-core`'s `bootstrap:dev`       |
-| `test`             | `pytest`                                                                                                               | Run the test suite                                                                                         |
-| `lint`             | `ruff check .`                                                                                                         | Lint                                                                                                       |
-| `format`           | `ruff format .`                                                                                                        | Format                                                                                                     |
+| Task               | Command                                                                                                                                                                  | Purpose                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `submodule:init`   | `git submodule update --init --recursive`                                                                                                                                | First-time setup after cloning — populates `vendor/receipt-core` at its pinned commit                      |
+| `submodule:update` | `git -C vendor/receipt-core fetch && git -C vendor/receipt-core checkout <new-commit> && git add vendor/receipt-core`                                                    | Deliberately bump the pinned schema version. Stages the new submodule pointer for commit in `receipt-etl`. |
+| `gen:types`        | `datamodel-codegen --input vendor/receipt-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black` | Regenerate Python types from the vendored JSON Schema. Run after `submodule:update`, or on first setup.    |
+| `bootstrap`        | `uv run poe submodule:init && uv run poe gen:types`                                                                                                                      | Single command from a cold clone to a working local setup — mirrors `receipt-core`'s `bootstrap:dev`       |
+| `test`             | `pytest`                                                                                                                                                                 | Run the test suite                                                                                         |
+| `lint`             | `ruff check .`                                                                                                                                                           | Lint                                                                                                       |
+| `format`           | `ruff format .`                                                                                                                                                          | Format                                                                                                     |
 
-`pretest` should run `bootstrap` the same way `receipt-core`'s `pretest` runs `bootstrap:dev`. This makes `uv run test` self-sufficient from a cold clone, with no manual setup steps to remember or document separately.
+`pretest` runs `bootstrap` the same way `receipt-core`'s `pretest` runs `bootstrap:dev`. This makes `uv run poe test` self-sufficient from a cold clone, with no manual setup steps to remember or document separately.
 
 ---
 
@@ -42,34 +42,37 @@ This is why the team builds Load _early_ (Phase 4) against a mock, in parallel w
 
 ```txt
 receipt-etl/
-├── receipt_etl/
-│   ├── types/           # generated from receipt-core's JSON Schema
-│   ├── extract/         # extractor interface + adapters
-│   ├── transform/        # reconcile, validate, shape, emit
-│   ├── load/             # httpx client for receipt-api
-│   └── config.py
-├── mock_api/             # standalone FastAPI app implementing the sketched OpenAPI spec
-├── vendor/receipt-core/  # git submodule, pinned commit
-├── scripts/
-│   └── gen_types.sh      # runs datamodel-code-generator against vendor/receipt-core schemas
+├── src/
+│   └── etl/
+│       ├── types/         # generated from receipt-core's JSON Schema
+│       ├── extract/       # extractor interface + adapters
+│       ├── transform/     # reconcile, validate, shape, emit
+│       ├── load/          # httpx client for receipt-api
+│       └── config.py
+├── mock_api/              # standalone FastAPI app implementing the sketched OpenAPI spec
+├── vendor/receipt-core/   # git submodule, pinned commit
 ├── tests/
 ├── .pre-commit-config.yaml
 ├── .github/workflows/ci.yml
-└── pyproject.toml        # uv-managed
+└── pyproject.toml         # uv-managed, includes [tool.poe.tasks]
 ```
+
+`src/` is the standard Python "src layout" convention — it prevents tests from accidentally importing an uninstalled local copy of the package instead of the properly installed one. The importable package name is `etl` (not `receipt_etl`), since this repo builds exactly one pipeline and the extra prefix would be redundant inside it.
 
 ---
 
-## Phase 1 — Repo & schema foundation _(no dependencies)_
+## Phase 1 — Repo & schema foundation _(no dependencies)_ — ✅ done
 
-- `uv init`, set up `pyproject.toml`, lockfile. Add the `[tool.uv.scripts]` entries from "Named commands" above: `submodule:init`, `submodule:update`, `gen:types`, `bootstrap`, `test`, `lint`, `format`.
-- Add `receipt-core` as a git submodule: `git submodule add https://github.com/devdesiignn/receipt-core.git vendor/receipt-core`, then pin it to a specific commit. From then on, first-time setup is `uv run submodule:init`. Deliberately bumping the pinned schema version later is `uv run submodule:update`.
-- `uv run gen:types` runs `datamodel-code-generator` against `vendor/receipt-core/schemas/*.schema.json`, output into `receipt_etl/types/`. Confirm the exact schema path once the submodule is added — `receipt-core`'s `docs/SCHEMA.md` documents the schema location.
-- Round-trip test: generated types can construct a valid instance and reject an invalid one (e.g. missing required field).
-- Set up `pre-commit` with `ruff` (lint + format), matching `receipt-core`'s lint-staged convention.
-- Set up `.github/workflows/ci.yml`: run `pytest` (and `ruff check`) on push/PR.
+- [x] `uv init`, set up `pyproject.toml`, lockfile. Named commands added to `pyproject.toml`'s `[tool.poe.tasks]` (see "Named commands" above): `submodule:init`, `submodule:update`, `gen:types`, `bootstrap`, `test`, `lint`, `format`.
+- [x] Added `receipt-core` as a git submodule at `vendor/receipt-core`, pinned to its commit at add-time. First-time setup is `uv run poe submodule:init`. Deliberately bumping the pinned schema version later is `uv run poe submodule:update`.
+- [x] `uv run poe gen:types` runs `datamodel-codegen` against `vendor/receipt-core/schemas/*.schema.json`, output into `src/etl/types/`. Confirmed schema path matches `receipt-core`'s `docs/SCHEMA.md`.
+- [x] Round-trip test (`tests/test_generated_types.py`): generated types construct a valid instance and reject an invalid one (missing required field) — covers `Store` and `Receipt` (with nested `LineItem`).
+- [x] `pre-commit` set up with `ruff-check --fix` + `ruff-format`, matching `receipt-core`'s lint-staged convention. Hook installed and verified to actually rewrite bad code.
+- [x] `.github/workflows/ci.yml` set up: runs `uv run poe lint` and `uv run poe test` on push/PR, with submodule checkout.
 
 **Blocks:** everything else. Extract, Transform, and Load all use the generated types.
+
+**Not yet started:** Phases 2–7 (Extract, Transform, Load, wiring, hardening).
 
 ---
 
@@ -96,7 +99,7 @@ receipt-etl/
 
 - Sketch a minimal OpenAPI spec for the combined-payload write endpoint (receipt + nested line_items + reviews, atomic).
 - Build the standalone FastAPI mock app (`mock_api/`) implementing that spec — success path, "already exists" (duplicate `content_hash`) response, validation-error response.
-- Build the `httpx`-based Load client in `receipt_etl/load/` against the spec.
+- Build the `httpx`-based Load client in `src/etl/load/` against the spec.
 - Unit tests via `respx`, mocking the same success/duplicate/validation-error paths.
 - Manual smoke test: run the mock app locally, point the Load client at it, confirm a real HTTP round trip.
 
