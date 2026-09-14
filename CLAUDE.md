@@ -42,6 +42,8 @@ The importable package is `etl`, living at `src/etl/` (standard Python src-layou
 
 Read [`receipt-core`'s SCHEMA.md](../receipt-core/docs/SCHEMA.md) before writing any extraction logic. It defines the extractor interface this pipeline must produce. `receipt-core`'s JSON Schema files are vendored into this repo as a git submodule, `vendor/receipt-core`, pinned to a commit — see `docs/DECISIONS.md`. This repo uses them to generate its own Python types via `datamodel-code-generator`. Both `receipt-etl` and `receipt-api` validate against this schema independently. `receipt-etl`'s check is a fail-fast optimization, not the enforcement mechanism.
 
+**Standing rule: at the start of every new session, before any other work, update the submodule pin.** Run `git -C vendor/receipt-core fetch`, then compare against the pinned commit (`git -C vendor/receipt-core log --oneline -1`). If `receipt-core` moved past the pinned commit, run `uv run poe submodule:update` and regenerate types immediately, then tell the user what changed. Do this at the start of every session, not just once — the pin exists to prevent silent drift, not to freeze the schema forever.
+
 - Successfully extracted fields go into `stores` / `receipts` / `line_items`, matching `receipt-core`'s JSON Schemas (`store.schema.json`, `receipt.schema.json`, `line_item.schema.json`).
 - Anything uncertain (low-confidence field, disagreement between extraction attempts, a missed line item) goes into `extraction_reviews` instead, matching `extraction_review.schema.json`:
   - Single wrong field → `field_name` is the real column name, `line_item_id` set only if it's a line-item-level field.
