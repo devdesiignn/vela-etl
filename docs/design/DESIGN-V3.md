@@ -90,16 +90,16 @@ This is `vela-etl`'s stated design expectation, handed off as a requirement to w
 
 Each implements `extract(image) -> ExtractionResult`, or returns an `extraction_reviews`-shaped row on total failure. Each also slots into the extractor list as a plain function. Config decides which run for a given receipt. The orchestrator never branches on kind. **This is the payoff of the plug-in interface above.** Adding a new vendor — a 10th row to the table below — is purely additive. Write one adapter satisfying the interface, then add it to config. This requires zero changes to orchestration, reconciliation, or any other stage.
 
-| Item                                           | Loadable as an extractor module? | What the adapter has to do                                                                                                         |
-| ---------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `pytesseract`                                  | Yes                              | Wrap raw text output, parse into store/receipt/line_items shape yourself                                                           |
-| EasyOCR                                        | Yes                              | Same — raw text/boxes out, own mapping logic                                                                                       |
-| PaddleOCR                                      | Yes                              | Same — general OCR, needs own mapping logic                                                                                        |
-| docTR                                          | Yes                              | Same — general OCR, needs own mapping logic                                                                                        |
-| AWS Textract (AnalyzeExpense)                  | Yes                              | Response is already receipt-shaped — adapter mostly renames fields, needs AWS credentials                                          |
-| Azure Document Intelligence (prebuilt receipt) | Yes                              | Same as Textract — receipt-shaped output, needs Azure credentials                                                                  |
-| Claude / GPT-4V / Gemini                       | Yes                              | Prompted to return JSON matching schema directly — adapter mostly parses that JSON, needs API key                                  |
-| Qwen2.5-VL / Llama Vision via Ollama           | Yes                              | Same pattern as vision LLMs, called over Ollama's local HTTP API instead of a paid vendor                                          |
+| Item                                           | Loadable as an extractor module? | What the adapter has to do                                                                                                      |
+| ---------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `pytesseract`                                  | Yes                              | Wrap raw text output, parse into store/receipt/line_items shape yourself                                                        |
+| EasyOCR                                        | Yes                              | Same — raw text/boxes out, own mapping logic                                                                                    |
+| PaddleOCR                                      | Yes                              | Same — general OCR, needs own mapping logic                                                                                     |
+| docTR                                          | Yes                              | Same — general OCR, needs own mapping logic                                                                                     |
+| AWS Textract (AnalyzeExpense)                  | Yes                              | Response is already receipt-shaped — adapter mostly renames fields, needs AWS credentials                                       |
+| Azure Document Intelligence (prebuilt receipt) | Yes                              | Same as Textract — receipt-shaped output, needs Azure credentials                                                               |
+| Claude / GPT-4V / Gemini                       | Yes                              | Prompted to return JSON matching schema directly — adapter mostly parses that JSON, needs API key                               |
+| Qwen2.5-VL / Llama Vision via Ollama           | Yes                              | Same pattern as vision LLMs, called over Ollama's local HTTP API instead of a paid vendor                                       |
 | Manual                                         | Not a module                     | A person filling a form in `vela-api`'s dashboard — no code, but returns the same `ExtractionResult`/`extraction_reviews` shape |
 
 Cloud vendors with receipt-specific parsing (Textract, Azure) need the least adapter work, since their output is already close to the schema. General-purpose OCR needs the most, since raw text must be turned into structured fields by hand. Vision LLMs sit in between. The prompt steers the output shape, but the response still needs parsing and validation.
@@ -173,22 +173,22 @@ Per-field review:
 
 ## Tool inventory (Python, all stages)
 
-| Stage             | Purpose                                     | Tool                                                                           | Pricing                            |
-| ----------------- | ------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------- |
-| Extract           | OCR, free/local                             | `pytesseract`, EasyOCR, PaddleOCR, or docTR                                    | Free, open source                  |
-| Extract           | OCR, cloud vendor                           | AWS Textract (AnalyzeExpense) / Azure Document Intelligence (prebuilt receipt) | Paid, both have limited free tiers |
-| Extract           | Vision LLM, cloud                           | Claude / GPT-4V / Gemini SDKs                                                  | Paid, pay-per-use                  |
-| Extract           | Vision LLM, self-hosted                     | Qwen2.5-VL or Llama 3.2 Vision via Ollama                                      | Free, open source (self-hosted)    |
-| Extract           | Image preprocessing                         | OpenCV                                                                         | Free, open source                  |
-| Extract           | Retry/backoff on flaky vendor calls         | `tenacity`                                                                     | Free, open source                  |
-| Extract/Transform | Validate data shapes                        | `pydantic`                                                                     | Free, open source                  |
+| Stage             | Purpose                                  | Tool                                                                           | Pricing                            |
+| ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------- |
+| Extract           | OCR, free/local                          | `pytesseract`, EasyOCR, PaddleOCR, or docTR                                    | Free, open source                  |
+| Extract           | OCR, cloud vendor                        | AWS Textract (AnalyzeExpense) / Azure Document Intelligence (prebuilt receipt) | Paid, both have limited free tiers |
+| Extract           | Vision LLM, cloud                        | Claude / GPT-4V / Gemini SDKs                                                  | Paid, pay-per-use                  |
+| Extract           | Vision LLM, self-hosted                  | Qwen2.5-VL or Llama 3.2 Vision via Ollama                                      | Free, open source (self-hosted)    |
+| Extract           | Image preprocessing                      | OpenCV                                                                         | Free, open source                  |
+| Extract           | Retry/backoff on flaky vendor calls      | `tenacity`                                                                     | Free, open source                  |
+| Extract/Transform | Validate data shapes                     | `pydantic`                                                                     | Free, open source                  |
 | Transform         | Validate against vela-core's JSON Schema | `jsonschema` or `pydantic`                                                     | Free, open source                  |
-| Transform         | Generate Python types from JSON Schema      | `datamodel-code-generator`                                                     | Free, open source                  |
-| Transform         | Content hash for dedup                      | `hashlib` (built-in)                                                           | Free                               |
+| Transform         | Generate Python types from JSON Schema   | `datamodel-code-generator`                                                     | Free, open source                  |
+| Transform         | Content hash for dedup                   | `hashlib` (built-in)                                                           | Free                               |
 | Load              | HTTP calls to vela-api                   | `httpx`                                                                        | Free, open source                  |
 | Load              | Mock vela-api in tests                   | `respx`                                                                        | Free, open source                  |
-| All               | Testing                                     | `pytest`                                                                       | Free, open source                  |
-| All               | Logging                                     | `structlog` or built-in `logging`                                              | Free, open source                  |
+| All               | Testing                                  | `pytest`                                                                       | Free, open source                  |
+| All               | Logging                                  | `structlog` or built-in `logging`                                              | Free, open source                  |
 
 ---
 
