@@ -62,7 +62,7 @@ vela-etl/
 
 ---
 
-## Phase 1 — Repo & schema foundation _(no dependencies)_ — ✅ done
+## Phase 1 — Repo & schema foundation — ✅ done
 
 - [x] `uv init`, set up `pyproject.toml`, lockfile. Named commands added to `pyproject.toml`'s `[tool.poe.tasks]` (see "Named commands" above): `submodule:init`, `submodule:update`, `gen:types`, `bootstrap`, `test`, `lint`, `format`.
 - [x] Added `vela-core` as a git submodule at `vendor/vela-core`, pinned to its commit at add-time. First-time setup is `uv run poe submodule:init`. Deliberately bumping the pinned schema version later is `uv run poe submodule:update`.
@@ -77,7 +77,7 @@ vela-etl/
 
 ---
 
-## Phase 2 — Extractor interface & orchestrator _(depends on Phase 1)_
+## Phase 2 — Extractor interface & orchestrator
 
 - Define `ExtractionResult` type using `pydantic` (shape validation for candidate data, per the design doc's Extract/Transform tool inventory) and the extractor `Protocol` (`extract(image) -> ExtractionResult`).
 - Orchestrator: takes a config-driven list of extractors, runs each, returns the results list unchanged in shape regardless of count (1 or N).
@@ -86,7 +86,7 @@ vela-etl/
 
 ---
 
-## Phase 3 — Transform pipeline _(depends on Phase 1 only — parallel to Phase 2)_
+## Phase 3 — Transform pipeline
 
 - Implement `reconcile`, `validate`, `shape`, `emit` as pure functions per the design doc's rules (sentinels, `flagged_reason` values, `line_order`).
 - `shape` computes `content_hash` via stdlib `hashlib` as a pure function of `store_id + transaction_ref + date + total`.
@@ -96,7 +96,7 @@ vela-etl/
 
 ---
 
-## Phase 4 — Mock vela-api & Load client _(depends on Phase 1, blocks nothing else)_ — ✅ done
+## Phase 4 — Mock vela-api & Load client — ✅ done
 
 - [x] Sketched a minimal OpenAPI spec (`docs/api/openapi.yaml`) for the combined-payload write endpoint, one endpoint (`POST /ingestions`) with `store` + `receipt` (nested `line_items`) always required, `extraction_reviews` optional on the same request. Per `vela-core`'s `docs/SCHEMA.md`, the extractor interface has two sides, and the payload must carry both. Successfully extracted data goes into `stores` / `receipts` / `line_items` together. `store` is not a separate concern from `receipt`. Both belong in the same request, since the pipeline starts from a bare photo with no pre-existing store row to reference. Anything uncertain or wrong (low confidence, disagreement, a missed item) goes into `extraction_reviews` instead, for the same underlying extracted content. Confirmed `DESIGN-V3.md`'s Load section text omits `store` from its description — spec corrects it; a follow-up to fix the design doc's own wording is still open.
 - [x] `vela-etl` sends the extracted store data with each receipt, unconditionally. It has no database connection, per this repo's own architecture. `LoadClient` strips server-assigned `id`/`store_id`/`receipt_id` fields from the outgoing payload — `vela-api` mints those, not `vela-etl`.
