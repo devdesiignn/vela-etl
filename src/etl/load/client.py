@@ -44,9 +44,11 @@ class LoadClient:
 
     def __init__(self, base_url: str, *, client: httpx.Client | None = None) -> None:
         self._client = client or httpx.Client(base_url=base_url)
+        self._owns_client = client is None
 
     def close(self) -> None:
-        self._client.close()
+        if self._owns_client:
+            self._client.close()
 
     def __enter__(self) -> Self:
         return self
@@ -71,13 +73,15 @@ class LoadClient:
             ]
 
         response = self._client.post("/ingestions", json=payload)
-        body = response.json()
 
         if response.status_code == 201:
+            body = response.json()
             return Created(receipt_id=body["receipt_id"], store_id=body["store_id"])
         if response.status_code == 409:
+            body = response.json()
             return Duplicate(existing_receipt_id=body["existing_receipt_id"])
         if response.status_code == 422:
+            body = response.json()
             return ValidationError(errors=body.get("errors", []))
 
         response.raise_for_status()
