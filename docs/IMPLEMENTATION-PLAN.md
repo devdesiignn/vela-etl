@@ -73,26 +73,27 @@ vela-etl/
 
 **Blocks:** everything else. Extract, Transform, and Load all use the generated types.
 
-**Not yet started:** Phase 2 (extractor interface & orchestrator skeleton), Phase 3 (Transform), Phase 5 (first real adapters), Phase 6 (end-to-end wiring), Phase 7 (remaining adapters & hardening).
+**Not yet started:** Phase 2's orchestrator (the `ExtractionResult`/`Candidate` types below are already in place), Phase 5 (first real adapters), Phase 6 (end-to-end wiring), Phase 7 (remaining adapters & hardening).
 
 ---
 
 ## Phase 2 — Extractor interface & orchestrator
 
-- Define `ExtractionResult` type using `pydantic` (shape validation for candidate data, per the design doc's Extract/Transform tool inventory) and the extractor `Protocol` (`extract(image) -> ExtractionResult`).
-- Orchestrator: takes a config-driven list of extractors, runs each, returns the results list unchanged in shape regardless of count (1 or N).
-- Total-failure path: an extractor can return an `extraction_reviews`-shaped row directly instead of an `ExtractionResult`.
-- Test against hand-written stub extractors only — no real OCR/vision-LLM adapters yet. This isolates orchestration logic from adapter correctness.
+- [x] `ExtractionResult`, `Candidate`/`CandidateStore`/`CandidateReceipt`/`CandidateLineItem`, and `Confidence` types defined with `pydantic` in `src/etl/extract/types.py`, per the design doc's Extract/Transform tool inventory.
+- [ ] Extractor `Protocol` (`extract(image) -> ExtractionResult`) itself is not yet defined.
+- [ ] Orchestrator: takes a config-driven list of extractors, runs each, returns the results list unchanged in shape regardless of count (1 or N).
+- [ ] Total-failure path: an extractor can return an `extraction_reviews`-shaped row directly instead of an `ExtractionResult`.
+- [ ] Test against hand-written stub extractors only — no real OCR/vision-LLM adapters yet. This isolates orchestration logic from adapter correctness.
 
 ---
 
-## Phase 3 — Transform pipeline
+## Phase 3 — Transform pipeline — ✅ done
 
-- Implement `reconcile`, `validate`, `shape`, `emit` as pure functions per the design doc's rules (sentinels, `flagged_reason` values, `line_order`).
-- `shape` computes `content_hash` via stdlib `hashlib` as a pure function of `store_id + transaction_ref + date + total`.
-- `validate`, and re-validation against `vela-core`'s JSON Schema before Load, uses `pydantic` or `jsonschema`, per the design doc's tool inventory. Pick one as the primary validator. Both may end up in use for different purposes: `pydantic` for shape and types, `jsonschema` for validating raw dicts against the vendored schema files directly. If so, document why in code comments.
-- Test with hand-built `ExtractionResult` fixtures — no real extractors, no `vela-api`, needed to exercise this stage.
-- Cover: single extractor (pass-through), agreeing extractors (zero review rows), disagreeing extractors (one review row per extractor), validation failures, total-failure input.
+- [x] Implemented `reconcile`, `validate`, `shape`, `emit` as pure functions per the design doc's rules (sentinels, `flagged_reason` values, `line_order`), in `src/etl/transform/`.
+- [x] `shape` computes `content_hash` via stdlib `hashlib` as a pure function of `store_id + transaction_ref + date + total`.
+- [x] Validator choice: `pydantic` only (see `shape.py`'s module docstring for why `jsonschema` would be redundant — both would ultimately re-check the same vendored `.schema.json` files, so constructing the generated `Store`/`Receipt`/`LineItem` models is treated as the re-validation step).
+- [x] Tests (`tests/test_transform.py`) with hand-built `ExtractionResult` fixtures — no real extractors, no `vela-api`, needed to exercise this stage.
+- [x] Covers: single extractor (pass-through), agreeing extractors (zero review rows), disagreeing extractors (one review row per extractor), validation failures, missing/extra line items, `extras` catch-all routing.
 
 ---
 
