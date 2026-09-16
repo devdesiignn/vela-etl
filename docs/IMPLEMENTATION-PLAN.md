@@ -33,6 +33,7 @@ This is why the team builds Load _early_ (Phase 4) against a mock, in parallel w
 | `test`             | `pytest`                                                                                                                                                              | Run the test suite                                                                                      |
 | `lint`             | `ruff check .`                                                                                                                                                        | Lint                                                                                                    |
 | `format`           | `ruff format .`                                                                                                                                                       | Format                                                                                                  |
+| `mock-api`         | `uvicorn mock_api.app:app --port 2222 --reload`                                                                                                                       | Run the `vela-api` mock locally. Port `2222`, distinct from `vela-core`'s `1111`.                       |
 
 `pretest` runs `bootstrap` the same way `vela-core`'s `pretest` runs `bootstrap:dev`. This makes `uv run poe test` self-sufficient from a cold clone, with no manual setup steps to remember or document separately.
 
@@ -61,7 +62,7 @@ vela-etl/
 
 ---
 
-## Phase 1 — Repo & schema foundation _(no dependencies)_ — ✅ done
+## Phase 1 — Repo & schema foundation — ✅ done
 
 - [x] `uv init`, set up `pyproject.toml`, lockfile. Named commands added to `pyproject.toml`'s `[tool.poe.tasks]` (see "Named commands" above): `submodule:init`, `submodule:update`, `gen:types`, `bootstrap`, `test`, `lint`, `format`.
 - [x] Added `vela-core` as a git submodule at `vendor/vela-core`, pinned to its commit at add-time. First-time setup is `uv run poe submodule:init`. Deliberately bumping the pinned schema version later is `uv run poe submodule:update`.
@@ -72,11 +73,11 @@ vela-etl/
 
 **Blocks:** everything else. Extract, Transform, and Load all use the generated types.
 
-**Not yet started:** Phases 2–7 (Extract, Transform, Load, wiring, hardening).
+**Not yet started:** Phase 2 (extractor interface & orchestrator skeleton), Phase 3 (Transform), Phase 5 (first real adapters), Phase 6 (end-to-end wiring), Phase 7 (remaining adapters & hardening).
 
 ---
 
-## Phase 2 — Extractor interface & orchestrator _(depends on Phase 1)_
+## Phase 2 — Extractor interface & orchestrator
 
 - Define `ExtractionResult` type using `pydantic` (shape validation for candidate data, per the design doc's Extract/Transform tool inventory) and the extractor `Protocol` (`extract(image) -> ExtractionResult`).
 - Orchestrator: takes a config-driven list of extractors, runs each, returns the results list unchanged in shape regardless of count (1 or N).
@@ -85,7 +86,7 @@ vela-etl/
 
 ---
 
-## Phase 3 — Transform pipeline _(depends on Phase 1 only — parallel to Phase 2)_
+## Phase 3 — Transform pipeline
 
 - Implement `reconcile`, `validate`, `shape`, `emit` as pure functions per the design doc's rules (sentinels, `flagged_reason` values, `line_order`).
 - `shape` computes `content_hash` via stdlib `hashlib` as a pure function of `store_id + transaction_ref + date + total`.
@@ -95,14 +96,14 @@ vela-etl/
 
 ---
 
-## Phase 4 — Mock vela-api & Load client _(depends on Phase 1, blocks nothing else)_
+## Phase 4 — Mock vela-api & Load client — ✅ done
 
-- Sketch a minimal OpenAPI spec for the combined-payload write endpoint. Per `vela-core`'s `docs/SCHEMA.md`, the extractor interface has two sides, and the payload must carry both. Successfully extracted data goes into `stores` / `receipts` / `line_items` together. `store` is not a separate concern from `receipt`. Both belong in the same success path, since the pipeline starts from a bare photo with no pre-existing store row to reference. Anything uncertain or wrong (low confidence, disagreement, a missed item) goes into `extraction_reviews` instead, for the same underlying extracted content. So the payload has two parts, written atomically: store + receipt + nested line_items for the success path, and extraction_reviews for the uncertain/failure path. `DESIGN-V3.md`'s Load section omits `store` from its version of this list. Confirm and correct there too before finalizing the spec.
-- `vela-etl` sends the extracted store data with each receipt, unconditionally. It has no database connection, per this repo's own architecture.
-- Build the standalone FastAPI mock app (`mock_api/`) implementing that spec — success path, "already exists" (duplicate `content_hash`) response, validation-error response.
-- Build the `httpx`-based Load client in `src/etl/load/` against the spec.
-- Unit tests via `respx`, mocking the same success/duplicate/validation-error paths.
-- Manual smoke test: run the mock app locally, point the Load client at it, confirm a real HTTP round trip.
+- [x] Sketched a minimal OpenAPI spec (`docs/api/openapi.yaml`) for the combined-payload write endpoint, one endpoint (`POST /ingestions`) with `store` + `receipt` (nested `line_items`) always required, `extraction_reviews` optional on the same request. Per `vela-core`'s `docs/SCHEMA.md`, the extractor interface has two sides, and the payload must carry both. Successfully extracted data goes into `stores` / `receipts` / `line_items` together. `store` is not a separate concern from `receipt`. Both belong in the same request, since the pipeline starts from a bare photo with no pre-existing store row to reference. Anything uncertain or wrong (low confidence, disagreement, a missed item) goes into `extraction_reviews` instead, for the same underlying extracted content. Confirmed `DESIGN-V3.md`'s Load section text omits `store` from its description — spec corrects it; a follow-up to fix the design doc's own wording is still open.
+- [x] `vela-etl` sends the extracted store data with each receipt, unconditionally. It has no database connection, per this repo's own architecture. `LoadClient` strips server-assigned `id`/`store_id`/`receipt_id` fields from the outgoing payload — `vela-api` mints those, not `vela-etl`.
+- [x] Built the standalone FastAPI mock app (`mock_api/app.py`) implementing that spec — success (`201`) path, duplicate (`409`, in-memory `content_hash` tracking) path, validation-error (`422`) path. Run locally via `uv run poe mock-api` (port `2222`, distinct from `vela-core`'s Postgres on `1111`).
+- [x] Built the `httpx`-based Load client (`src/etl/load/client.py`) against the spec — `LoadClient.ingest(store, receipt, extraction_reviews=None)` returns one of three typed results (`Created`/`Duplicate`/`ValidationError`), context-manager support for connection cleanup.
+- [x] Unit tests (`tests/test_load_client.py`) via `respx`, covering success, payload shape (ids stripped), reviews-included, duplicate, and validation-error paths.
+- [x] Manual smoke test: ran the mock app locally via `uvicorn`, pointed `LoadClient` at it, confirmed a real HTTP round trip for both the created and duplicate paths.
 
 ---
 

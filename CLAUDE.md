@@ -64,6 +64,40 @@ Docs and comments in this repo follow ASD-STE100 (Simplified Technical English):
 - Use Conventional Commits: `type(scope): message` (e.g. `feat(extractor): add OCR confidence scoring`, `fix(pipeline): correct duplicate detection hash`, `chore(deps): bump sdk version`). Common types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`. Scope is the affected domain and is optional but preferred when a change is domain-specific.
 - Do not add a `Co-Authored-By: Claude` trailer to commit messages in this repo.
 
+## PR summary convention
+
+Two styles, depending on the nature of the PR.
+
+**Style 1 — Technical / file-level** (infrastructure, refactors, config, tooling). Use when the PR mainly changes how the pieces connect: new dependencies, config, CI, project scaffolding. Lead each section with a Conventional Commits tag. Bullet specific files, functions, or flags changed.
+
+```md
+## What changed
+
+**`feat(load)`: Short description of the core change**
+- Specific file or function changed and what happened to it.
+- Another specific change with enough detail to understand without reading the diff.
+
+**`docs(plan)`: Short description**
+- Specific file: what was changed and why.
+```
+
+**Style 2 — Pipeline behavior / data-contract level** (extraction logic, reconciliation rules, schema handling, review-row generation). Use when the PR changes what the pipeline actually does with a receipt: a new extractor, a changed confidence rule, a new `extraction_reviews` case. Lead each section with a plain heading. Explain the behavior and why, not which files moved.
+
+```md
+## What changed
+
+### Section heading
+One or two sentences explaining what changed and why — the behavior, not the file.
+
+### Another section
+Same pattern.
+```
+
+**Delivery format.** When asked for a PR summary, always return **both**:
+
+1. A PR title (short, imperative, under ~70 chars) — separate from the summary body, never a commit message. No `type(scope):` prefix, and never a commit subject copied verbatim even if the branch has one commit.
+2. The summary body, in a single copyable markdown block, using Style 1 or Style 2 as appropriate. Diffstat scope matters: base the summary on `main...<branch>`, not on the full branch history if `main` has since moved.
+
 ## Related repos
 
 Part of [Vela](https://github.com/devdesiignn/vela) (Receipt Intelligence Platform) — see its `docs/MASTER-PLAN.md` for full cross-repo architecture and timeline.
