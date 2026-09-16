@@ -10,7 +10,7 @@ Design is finalized. Implementation is underway. Phase 1 (repo and schema founda
 
 Managed with [uv](https://docs.astral.sh/uv/). Named commands run via [`poethepoet`](https://github.com/nat-n/poethepoet) (`uv` has no built-in task runner), defined in `pyproject.toml`'s `[tool.poe.tasks]`:
 
-- `uv run poe bootstrap` — first-time setup from a fresh clone: populates `vendor/receipt-core` and generates Python types from its JSON Schema.
+- `uv run poe bootstrap` — first-time setup from a fresh clone: populates `vendor/vela-core` and generates Python types from its JSON Schema.
 - `uv run poe test` — run the test suite (`pytest`). Runs `bootstrap` first via `pretest`, so it's self-sufficient from a cold clone.
 - `uv run poe lint` — lint (`ruff check .`).
 - `uv run poe format` — format (`ruff format .`).
@@ -21,14 +21,14 @@ The importable package is `etl`, living at `src/etl/` (standard Python src-layou
 
 ## What this repo is
 
-`receipt-etl` is P1 of the [Receipt Intelligence Platform](https://github.com/devdesiignn/receipt-intelligence-platform) — the ingestion/extraction pipeline. Photo in, structured data out: merchant, date, line items, quantities, prices, tax, total.
+`vela-etl` is P1 of [Vela](https://github.com/devdesiignn/vela) (Receipt Intelligence Platform) — the ingestion/extraction pipeline. Photo in, structured data out: merchant, date, line items, quantities, prices, tax, total.
 
 - **Language: Python**, whole pipeline (Extract, Transform, Load). One codebase, no cross-language boundary between stages. See `docs/DECISIONS.md` for why, instead of TypeScript, the original draft assumption.
 - Computes a confidence score per extracted field, with a manual-review path for anything the pipeline isn't confident about.
-- Extracts only the fields defined in [`receipt-core`](https://github.com/devdesiignn/receipt-core)'s schema: `stores`, `receipts`, `line_items`, `extraction_reviews`. Nothing beyond that is captured or retained.
-- **Never connects to `receipt-core`'s database directly.** All writes, meaning new extracted receipts, go through [`receipt-api`](https://github.com/devdesiignn/receipt-api). This happens via a single combined-payload endpoint: receipt, line_items, and reviews, atomic. `receipt-api` is the only service with a direct connection to `receipt-core`. Review *resolution* is entirely `receipt-api`'s job. This pipeline never touches it.
-- Built against `receipt-api`'s OpenAPI spec. It points at a mock server implementing that spec until `receipt-api`'s real implementation exists. Build order: `receipt-core` first, `receipt-etl` against the mock second, `receipt-api` for real third. `receipt-etl` then switches over with no code change.
-- **No interconnection beyond `receipt-api`.** Not `receipt-search`, not `receipt-agent`, not `receipt-forecast`, not `receipt-infra`. The platform's own guiding principle states that each repo stands alone. Nothing about how a sibling service consumes data downstream should ever leak into this repo's design.
+- Extracts only the fields defined in [`vela-core`](https://github.com/devdesiignn/vela-core)'s schema: `stores`, `receipts`, `line_items`, `extraction_reviews`. Nothing beyond that is captured or retained.
+- **Never connects to `vela-core`'s database directly.** All writes, meaning new extracted receipts, go through [`vela-api`](https://github.com/devdesiignn/vela-api). This happens via a single combined-payload endpoint: receipt, line_items, and reviews, atomic. `vela-api` is the only service with a direct connection to `vela-core`. Review *resolution* is entirely `vela-api`'s job. This pipeline never touches it.
+- Built against `vela-api`'s OpenAPI spec. It points at a mock server implementing that spec until `vela-api`'s real implementation exists. Build order: `vela-core` first, `vela-etl` against the mock second, `vela-api` for real third. `vela-etl` then switches over with no code change.
+- **No interconnection beyond `vela-api`.** Not `vela-search`, not `vela-agent`, not `vela-forecast`, not `vela-infra`. The platform's own guiding principle states that each repo stands alone. Nothing about how a sibling service consumes data downstream should ever leak into this repo's design.
 - Extractors are plug-in units behind one shared interface: `extract(image) -> ExtractionResult`. Orchestration, reconciliation, and everything downstream never branches on which extractor ran, how many ran, or why. Adding a new vendor adapter is purely additive.
 
 ## Scope boundaries
@@ -36,24 +36,24 @@ The importable package is `etl`, living at `src/etl/` (standard Python src-layou
 - v1 handles printed receipts only. POS screenshots and handwritten receipts are explicitly out of scope. Use an extractor pattern so other source types can be added later without changing the shared schema.
 - This service exposes no public API or dashboard.
 - Perfect per-receipt accuracy is not the goal. The pipeline tracks and reports extraction accuracy as a number: percent cleanly auto-extracted versus flagged for manual review. Manual review handles the remainder.
-- Privacy is data minimization, not redaction. Extract only what `receipt-core`'s schema defines, in required, common, and rare tiers, with rare fields going into a structured `extras` field. There is nothing extra to redact afterward.
+- Privacy is data minimization, not redaction. Extract only what `vela-core`'s schema defines, in required, common, and rare tiers, with rare fields going into a structured `extras` field. There is nothing extra to redact afterward.
 
-## The shared data contract (`receipt-core`)
+## The shared data contract (`vela-core`)
 
-Read [`receipt-core`'s SCHEMA.md](../receipt-core/docs/SCHEMA.md) before writing any extraction logic. It defines the extractor interface this pipeline must produce. `receipt-core`'s JSON Schema files are vendored into this repo as a git submodule, `vendor/receipt-core`, pinned to a commit — see `docs/DECISIONS.md`. This repo uses them to generate its own Python types via `datamodel-code-generator`. Both `receipt-etl` and `receipt-api` validate against this schema independently. `receipt-etl`'s check is a fail-fast optimization, not the enforcement mechanism.
+Read [`vela-core`'s SCHEMA.md](../vela-core/docs/SCHEMA.md) before writing any extraction logic. It defines the extractor interface this pipeline must produce. `vela-core`'s JSON Schema files are vendored into this repo as a git submodule, `vendor/vela-core`, pinned to a commit — see `docs/DECISIONS.md`. This repo uses them to generate its own Python types via `datamodel-code-generator`. Both `vela-etl` and `vela-api` validate against this schema independently. `vela-etl`'s check is a fail-fast optimization, not the enforcement mechanism.
 
-**Standing rule: at the start of every new session, before any other work, update the submodule pin.** Run `git -C vendor/receipt-core fetch`, then compare against the pinned commit (`git -C vendor/receipt-core log --oneline -1`). If `receipt-core` moved past the pinned commit, run `uv run poe submodule:update` and regenerate types immediately, then tell the user what changed. Do this at the start of every session, not just once — the pin exists to prevent silent drift, not to freeze the schema forever.
+**Standing rule: at the start of every new session, before any other work, update the submodule pin.** Run `git -C vendor/vela-core fetch`, then compare against the pinned commit (`git -C vendor/vela-core log --oneline -1`). If `vela-core` moved past the pinned commit, run `uv run poe submodule:update` and regenerate types immediately, then tell the user what changed. Do this at the start of every session, not just once — the pin exists to prevent silent drift, not to freeze the schema forever.
 
-- Successfully extracted fields go into `stores` / `receipts` / `line_items`, matching `receipt-core`'s JSON Schemas (`store.schema.json`, `receipt.schema.json`, `line_item.schema.json`).
+- Successfully extracted fields go into `stores` / `receipts` / `line_items`, matching `vela-core`'s JSON Schemas (`store.schema.json`, `receipt.schema.json`, `line_item.schema.json`).
 - Anything uncertain (low-confidence field, disagreement between extraction attempts, a missed line item) goes into `extraction_reviews` instead, matching `extraction_review.schema.json`:
   - Single wrong field → `field_name` is the real column name, `line_item_id` set only if it's a line-item-level field.
   - Whole line item wrong (merged/split/invented) → `field_name = "line_item"` sentinel.
   - Missed item entirely → `field_name = "missing_line_item"` sentinel, no `line_item_id`.
   - Multiple extractors disagreeing on the same field → one row per extractor, same `receipt_id`/`line_item_id`/`field_name`, `flagged_reason = "conflicting_extractions"`. Agreement produces zero rows.
 - `flagged_reason` (why the row exists) and `status` (`pending`/`resolved`/`rejected`) are independent — `rejected` is reversible, not terminal.
-- `content_hash` is computed from store, transaction ref, date, and total. `receipt-core` uses it to reject duplicate receipts at insert time. This pipeline must compute it consistently for the same physical receipt.
+- `content_hash` is computed from store, transaction ref, date, and total. `vela-core` uses it to reject duplicate receipts at insert time. This pipeline must compute it consistently for the same physical receipt.
 
-Do not treat `receipt-core`'s migration files as the contract. This repo validates against the JSON Schemas in `schemas/` instead.
+Do not treat `vela-core`'s migration files as the contract. This repo validates against the JSON Schemas in `schemas/` instead.
 
 ## Writing style
 
@@ -66,7 +66,7 @@ Docs and comments in this repo follow ASD-STE100 (Simplified Technical English):
 
 ## Related repos
 
-Part of the [Receipt Intelligence Platform](https://github.com/devdesiignn/receipt-intelligence-platform) — see its `docs/master-plan.md` for full cross-repo architecture and timeline.
+Part of [Vela](https://github.com/devdesiignn/vela) (Receipt Intelligence Platform) — see its `docs/MASTER-PLAN.md` for full cross-repo architecture and timeline.
 
-- [`receipt-core`](https://github.com/devdesiignn/receipt-core) — owns the schema this pipeline extracts into.
-- [`receipt-api`](https://github.com/devdesiignn/receipt-api) — the only path for writing structured data and review resolutions. This pipeline is built against its OpenAPI spec.
+- [`vela-core`](https://github.com/devdesiignn/vela-core) — owns the schema this pipeline extracts into.
+- [`vela-api`](https://github.com/devdesiignn/vela-api) — the only path for writing structured data and review resolutions. This pipeline is built against its OpenAPI spec.

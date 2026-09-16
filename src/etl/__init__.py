@@ -1,2 +1,2 @@
 def main() -> None:
-    print("Hello from receipt-etl!")
+    print("Hello from vela-etl!")
