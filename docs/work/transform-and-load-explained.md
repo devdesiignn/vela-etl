@@ -1,14 +1,17 @@
-# Transform and Load, explained for a new Python dev
+# Phase 1, Transform, and Load, explained for a new Python dev
 
-This walks through the two completed pipeline stages in `vela-etl` — **Transform**
-and **Load** — plus the shared type layer they both depend on. It assumes you know
-JavaScript/TypeScript but are new to Python, and it leans on real-life analogies
-wherever the code's *purpose* isn't obvious from its syntax.
+This walks through the three completed phases in `vela-etl` — **Phase 1**
+(repo and schema foundation), **Transform**, and **Load** — plus the shared
+type layer that Phase 1 produces and that Transform and Load both depend on.
+It assumes you know JavaScript/TypeScript but are new to Python, and it leans
+on real-life analogies wherever the code's *purpose* isn't obvious from its
+syntax.
 
-Scope: this covers what's actually built and tested today —
-`src/etl/types/`, `src/etl/transform/`, `src/etl/load/`, and `mock_api/`.
-Extract (turning a photo into raw guesses) is **not** covered here because it
-isn't implemented yet — see `docs/IMPLEMENTATION-PLAN.md` for that status.
+Scope: this covers what's actually built and tested today — the project
+scaffolding and tooling, `src/etl/types/`, `src/etl/transform/`,
+`src/etl/load/`, and `mock_api/`. Extract (turning a photo into raw guesses)
+is **not** covered here because it isn't implemented yet — see
+`docs/IMPLEMENTATION-PLAN.md` for that status.
 
 ---
 
@@ -44,7 +47,157 @@ drives the truck, and the truck never rewrites the page.
 
 ---
 
-## 2. The shared vocabulary: `src/etl/types/`
+## 2. Phase 1 — repo and schema foundation
+
+Before any pipeline logic could be written, the project needed its
+scaffolding: a build system, a way to stay in sync with the schema owned by
+a *different* repo, tests that prove the generated types are trustworthy,
+and automated checks that catch mistakes before they ever reach a teammate.
+None of this produces business logic — no reconciling, no validating,
+nothing that touches a receipt. It's the foundation everything else is built
+on, which is exactly why it had to come first.
+
+**Real-life analogy:** Phase 1 is pouring the concrete foundation and
+running the electrical wiring before anyone starts framing rooms. You can't
+see it in the finished house, but every wall built afterward depends on it
+being level and correctly wired.
+
+### 2.1 `uv` and `pyproject.toml` — the toolbox
+
+`vela-etl` uses [`uv`](https://docs.astral.sh/uv/) to manage Python
+dependencies and virtual environments, with a lockfile (`uv.lock`) pinning
+exact versions.
+
+**JS/TS analogy:** `uv` plays the same role as `npm`/`pnpm`/`yarn` —
+`pyproject.toml` is `package.json`, `uv.lock` is `package-lock.json`. `uv
+sync` installs exactly what's in the lockfile, the same guarantee
+`npm ci` gives you.
+
+Python's package ecosystem has no built-in equivalent of npm's `"scripts"`
+field, so this repo adds one via a task runner called
+[`poethepoet`](https://github.com/nat-n/poethepoet), configured entirely
+inside `pyproject.toml`'s `[tool.poe.tasks]` table and invoked as
+`uv run poe <task>`:
+
+```toml
+[tool.poe.tasks]
+bootstrap = ["submodule:init", "gen:types"]
+test = "pytest"
+pretest = "bootstrap"
+lint = "ruff check ."
+format = "ruff format ."
+```
+
+**JS/TS analogy:**
+
+```json
+// package.json
+"scripts": {
+  "bootstrap": "npm run submodule:init && npm run gen:types",
+  "pretest": "npm run bootstrap",
+  "test": "jest",
+  "lint": "eslint .",
+  "format": "prettier --write ."
+}
+```
+
+`pretest` running automatically before `test` is the same convention
+`npm test`'s implicit `pretest` hook gives you for free — it's why
+`uv run poe test` works from a completely fresh clone with zero manual setup
+steps: it bootstraps itself first.
+
+### 2.2 The submodule — staying in sync with someone else's schema
+
+`vela-etl` doesn't own the definition of what a `Receipt` or `LineItem`
+looks like. A sibling repo, `vela-core`, does. So `vela-core` is vendored
+into this repo as a **git submodule**, pinned to one specific commit, living
+at `vendor/vela-core`.
+
+**JS/TS analogy:** picture publishing your design tokens or schema package
+to a private npm registry and another team installing it at an exact pinned
+version (`"@company/schema": "1.4.2"`, not `"^1.4.0"`) — except instead of a
+package registry, it's git itself doing the pinning, via a submodule commit
+SHA rather than a semver range.
+
+**Real-life analogy:** it's like a construction company keeping a *physical
+copy* of the government's official building-code manual on-site, dated and
+stamped with exactly which edition they're building to — instead of trusting
+someone's verbal summary of "roughly what the code says today." If the code
+changes next year, they don't automatically start building to it; they
+deliberately fetch the new edition, review what changed, and update every
+blueprint that referenced the old one.
+
+Two commands manage this relationship:
+
+- `uv run poe submodule:init` — first-time setup, pulls `vela-core` at its
+  currently-pinned commit. Nothing changes; you're just fetching what's
+  already agreed on.
+- `uv run poe submodule:update` — a *deliberate* decision to move the pin
+  forward to a newer `vela-core` commit, then stage that change for review.
+
+This project's own `CLAUDE.md` treats this so seriously that it's a standing
+rule: check for schema drift at the start of *every* session, not just once.
+
+### 2.3 Generating types from the schema
+
+Once the schema is vendored, `uv run poe gen:types` runs
+`datamodel-codegen` against `vendor/vela-core/schemas/*.schema.json` and
+writes Python classes into `src/etl/types/` — the `Store`, `Receipt`,
+`LineItem`, and `ExtractionReview` models covered in §3 below.
+
+**JS/TS analogy:** this is `openapi-typescript` or `json-schema-to-zod`
+pointed at someone else's schema file, run as a build step rather than
+hand-typed. The output files literally start with a
+`# generated by datamodel-codegen` header comment, the same signal as a
+`*.generated.ts` filename convention — a flag that says "don't hand-edit
+this, it'll be overwritten."
+
+A round-trip test (`tests/test_generated_types.py`) proves the generated
+types actually work as validators: constructing a `Store`/`Receipt` (with a
+nested `LineItem`) from valid data succeeds, and doing the same with a
+*missing required field* raises an error. This is the safety net that
+catches "the schema changed in a way that broke our assumptions" the moment
+it happens, rather than three files deep into Transform logic.
+
+### 2.4 Automated guardrails — `pre-commit` and CI
+
+Two layers catch mistakes at different points in the workflow:
+
+**`pre-commit`** runs `ruff check --fix` and `ruff format` automatically on
+every `git commit`, rewriting bad code before it's even committed.
+
+**JS/TS analogy:** this is exactly `husky` + `lint-staged` running `eslint
+--fix` and `prettier --write` on your staged files before a commit is
+allowed through — same idea, same trigger point, Python-native tools
+instead. (You actually saw this fire in this very conversation: the commit
+that added this doc's earlier version was auto-reformatted by this exact
+hook before it was allowed to land.)
+
+**GitHub Actions CI** (`.github/workflows/ci.yml`) runs `uv run poe lint`
+and `uv run poe test` on every push and pull request, including checking out
+the `vela-core` submodule so the generated-types round-trip test can
+actually run in a clean environment — the same role a `.github/workflows/*`
+file plays in any JS/TS repo running `eslint` and `jest` on every PR.
+
+**Real-life analogy:** `pre-commit` is a spell-checker that fixes typos
+*while you're still writing the letter*, before you seal the envelope. CI is
+the editor at the printing press who checks the final page one more time
+*after* it's been submitted, as a second independent safety net — catching
+anything that slipped through, or anything that only breaks once combined
+with someone else's changes.
+
+### 2.5 Why Phase 1 had to come first
+
+The implementation plan states this plainly: Phase 1 **blocks everything
+else**, because Extract, Transform, and Load all construct and depend on the
+generated types from `src/etl/types/`. There's no version of Transform's
+`shape()` function (§4.3 in the Transform section below) that makes sense without a `Receipt` class
+to construct — and there's no `Receipt` class without Phase 1's submodule
+pin and code generation having already run.
+
+---
+
+## 3. The shared vocabulary: `src/etl/types/`
 
 Before either Transform or Load can do anything, everyone needs to agree on
 *what a receipt record looks like*. That's `src/etl/types/`.
@@ -101,7 +254,7 @@ class Receipt(BaseModel):
 ```
 
 One shopping trip's receipt. `content_hash` is a fingerprint (explained in
-§4) used to detect "you already uploaded a photo of this exact receipt."
+the Shape step below) used to detect "you already uploaded a photo of this exact receipt."
 `extras` is a catch-all bucket for anything real but not important enough to
 be its own database column — like a loyalty-points footer, or a "thank you"
 message. Nothing captured there is lost, it's just not first-class.
@@ -169,7 +322,7 @@ back is already the typed object, not a separate parse step.
 
 ---
 
-## 3. Transform: `src/etl/transform/`
+## 4. Transform: `src/etl/transform/`
 
 Transform is four **pure functions** — meaning: no network calls, no
 database, no file reads/writes, no randomness, no hidden state. Same input,
@@ -188,7 +341,7 @@ The four functions run strictly in this order:
 reconcile → validate → shape → emit
 ```
 
-### 3.1 `reconcile.py` — "did the interns agree?"
+### 4.1 `reconcile.py` — "did the interns agree?"
 
 Input: a list of `ExtractionResult`s — one per "intern" (extractor) that
 looked at the same receipt. Each `ExtractionResult` carries that intern's
@@ -251,7 +404,7 @@ tally sheets from the same shift — not by comparing line 1 to line 1, but by
 matching "oh, this $4.99 entry on both sheets is clearly the same candy bar,"
 even if one cashier wrote "Snickers" and the other wrote "Snickers Bar."
 
-### 3.2 `validate.py` — "does the math actually check out?"
+### 4.2 `validate.py` — "does the math actually check out?"
 
 This runs *only* on the values `reconcile()` already trusted — it's a second,
 independent pass, not a retry of the first.
@@ -291,7 +444,7 @@ update) that nobody upstream would have flagged as "the two cashiers
 disagreed," because there was only one cashier and one register. The math
 itself is the second opinion here, not another person.
 
-### 3.3 `shape.py` — "put it in the real, official folder"
+### 4.3 `shape.py` — "put it in the real, official folder"
 
 By now, `resolved` is just a plain Python `dict` — flexible, but not yet a
 guaranteed-valid `Receipt`. `shape()` converts it into the real typed
@@ -354,7 +507,7 @@ Pydantic's required-field check runs first. If a receipt is missing its
 silently hashing the literal string `"None"` into a fingerprint that looks
 valid but isn't.
 
-### 3.4 `emit.py` — "put it in the outbox"
+### 4.4 `emit.py` — "put it in the outbox"
 
 The simplest file in the whole codebase — no logic, just gathers everything
 into one bundle:
@@ -382,14 +535,14 @@ the mail room (Load).
 
 ---
 
-## 4. Load: `src/etl/load/`
+## 5. Load: `src/etl/load/`
 
 Load is the only stage that does real I/O — it's the one part of this whole
 pipeline that can fail because of the network, a server being down, or bad
 credentials. Everything before this point was pure and local; this is where
 it finally leaves the building.
 
-### 4.1 `LoadClient` — the mail room
+### 5.1 `LoadClient` — the mail room
 
 ```python
 class LoadClient:
@@ -433,7 +586,7 @@ write in your own passport number — the passport office assigns that when
 they process it. You submit the *content* (name, photo, address); they
 return the *identifier*.
 
-### 4.2 The response: a discriminated union, not one shape
+### 5.2 The response: a discriminated union, not one shape
 
 ```python
 IngestionResult = Created | Duplicate | ValidationError
@@ -495,7 +648,7 @@ can tell you "hey, we already have a package with this exact barcode on our
 shelf." You don't get to declare a duplicate yourself — you can only ask, and
 trust the answer.
 
-### 4.3 `mock_api/app.py` — a stand-in office, since the real one doesn't exist yet
+### 5.3 `mock_api/app.py` — a stand-in office, since the real one doesn't exist yet
 
 `vela-api` (the real receiving office) hasn't been built yet. So instead of
 blocking all of Load's development and testing on that, this repo ships a
@@ -526,7 +679,7 @@ a real plane — the simulator behaves like the real cockpit closely enough
 that skills transfer directly, and switching from simulator to real aircraft
 doesn't require re-learning the controls.
 
-### 4.4 Tests: `respx`, not the mock app
+### 5.4 Tests: `respx`, not the mock app
 
 `tests/test_load_client.py` doesn't spin up the FastAPI mock app for its
 automated tests — that's reserved for manual, by-hand testing. Instead it
@@ -540,7 +693,7 @@ a human to manually click through an end-to-end flow.
 
 ---
 
-## 5. Putting it all together, one more time
+## 6. Putting it all together, one more time
 
 ```txt
                     ┌─────────────┐
