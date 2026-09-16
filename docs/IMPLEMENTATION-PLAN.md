@@ -10,64 +10,64 @@ This is why the team builds Load _early_ (Phase 4) against a mock, in parallel w
 
 ## Tooling decisions
 
-| Decision                       | Choice                                                      | Why                                                                                                                                                  |
-| ------------------------------ | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dependency manager             | [uv](https://docs.astral.sh/uv/)                            | One tool for venv, install, and lockfile. Fastest onramp for a from-scratch Python project.                                                          |
-| `receipt-core` schema sourcing | Git submodule, pinned to a commit                           | Conventional git-native mechanism for a pinned, trackable snapshot of another repo's content. Git enforces the version relationship, not memory.     |
-| Mock `receipt-api`             | Both `respx` (unit tests) and a standalone FastAPI mock app | `respx` gates automated testing. The standalone app lets the full pipeline be run manually end-to-end before the real `receipt-api` exists.          |
-| CI                             | GitHub Actions running `pytest`                             | Basic regression safety net from the start                                                                                                           |
-| Local enforcement              | `pre-commit` + `ruff`                                       | Matches `receipt-core`'s existing convention: Husky and lint-staged running eslint and prettier before every commit. Same idea, Python-native tools. |
+| Decision                    | Choice                                                      | Why                                                                                                                                               |
+| --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dependency manager          | [uv](https://docs.astral.sh/uv/)                            | One tool for venv, install, and lockfile. Fastest onramp for a from-scratch Python project.                                                       |
+| `vela-core` schema sourcing | Git submodule, pinned to a commit                           | Conventional git-native mechanism for a pinned, trackable snapshot of another repo's content. Git enforces the version relationship, not memory.  |
+| Mock `vela-api`             | Both `respx` (unit tests) and a standalone FastAPI mock app | `respx` gates automated testing. The standalone app lets the full pipeline be run manually end-to-end before the real `vela-api` exists.          |
+| CI                          | GitHub Actions running `pytest`                             | Basic regression safety net from the start                                                                                                        |
+| Local enforcement           | `pre-commit` + `ruff`                                       | Matches `vela-core`'s existing convention: Husky and lint-staged running eslint and prettier before every commit. Same idea, Python-native tools. |
 
 ---
 
 ## Named commands
 
-`receipt-core` exposes every setup and build operation as a named `npm run <script>` in `package.json`. The developer never has to remember a bare shell command. `uv` has no built-in equivalent (no `[tool.uv.scripts]`), so `receipt-etl` matches the pattern via [`poethepoet`](https://github.com/nat-n/poethepoet), a task runner configured entirely in `pyproject.toml`'s `[tool.poe.tasks]` and invoked as `uv run poe <task>`:
+`vela-core` exposes every setup and build operation as a named `npm run <script>` in `package.json`. The developer never has to remember a bare shell command. `uv` has no built-in equivalent (no `[tool.uv.scripts]`), so `vela-etl` matches the pattern via [`poethepoet`](https://github.com/nat-n/poethepoet), a task runner configured entirely in `pyproject.toml`'s `[tool.poe.tasks]` and invoked as `uv run poe <task>`:
 
-| Task               | Command                                                                                                                                                                  | Purpose                                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `submodule:init`   | `git submodule update --init --recursive`                                                                                                                                | First-time setup after cloning — populates `vendor/receipt-core` at its pinned commit                      |
-| `submodule:update` | `git -C vendor/receipt-core fetch && git -C vendor/receipt-core checkout <new-commit> && git add vendor/receipt-core`                                                    | Deliberately bump the pinned schema version. Stages the new submodule pointer for commit in `receipt-etl`. |
-| `gen:types`        | `datamodel-codegen --input vendor/receipt-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black` | Regenerate Python types from the vendored JSON Schema. Run after `submodule:update`, or on first setup.    |
-| `bootstrap`        | `uv run poe submodule:init && uv run poe gen:types`                                                                                                                      | Single command from a cold clone to a working local setup — mirrors `receipt-core`'s `bootstrap:dev`       |
-| `test`             | `pytest`                                                                                                                                                                 | Run the test suite                                                                                         |
-| `lint`             | `ruff check .`                                                                                                                                                           | Lint                                                                                                       |
-| `format`           | `ruff format .`                                                                                                                                                          | Format                                                                                                     |
+| Task               | Command                                                                                                                                                               | Purpose                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `submodule:init`   | `git submodule update --init --recursive`                                                                                                                             | First-time setup after cloning — populates `vendor/vela-core` at its pinned commit                      |
+| `submodule:update` | `git -C vendor/vela-core fetch && git -C vendor/vela-core checkout <new-commit> && git add vendor/vela-core`                                                          | Deliberately bump the pinned schema version. Stages the new submodule pointer for commit in `vela-etl`. |
+| `gen:types`        | `datamodel-codegen --input vendor/vela-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black` | Regenerate Python types from the vendored JSON Schema. Run after `submodule:update`, or on first setup. |
+| `bootstrap`        | `uv run poe submodule:init && uv run poe gen:types`                                                                                                                   | Single command from a cold clone to a working local setup — mirrors `vela-core`'s `bootstrap:dev`       |
+| `test`             | `pytest`                                                                                                                                                              | Run the test suite                                                                                      |
+| `lint`             | `ruff check .`                                                                                                                                                        | Lint                                                                                                    |
+| `format`           | `ruff format .`                                                                                                                                                       | Format                                                                                                  |
 
-`pretest` runs `bootstrap` the same way `receipt-core`'s `pretest` runs `bootstrap:dev`. This makes `uv run poe test` self-sufficient from a cold clone, with no manual setup steps to remember or document separately.
+`pretest` runs `bootstrap` the same way `vela-core`'s `pretest` runs `bootstrap:dev`. This makes `uv run poe test` self-sufficient from a cold clone, with no manual setup steps to remember or document separately.
 
 ---
 
 ## Project scaffolding
 
 ```txt
-receipt-etl/
+vela-etl/
 ├── src/
 │   └── etl/
-│       ├── types/         # generated from receipt-core's JSON Schema
+│       ├── types/         # generated from vela-core's JSON Schema
 │       ├── extract/       # extractor interface + adapters
 │       ├── transform/     # reconcile, validate, shape, emit
-│       ├── load/          # httpx client for receipt-api
+│       ├── load/          # httpx client for vela-api
 │       └── config.py
 ├── mock_api/              # standalone FastAPI app implementing the sketched OpenAPI spec
-├── vendor/receipt-core/   # git submodule, pinned commit
+├── vendor/vela-core/   # git submodule, pinned commit
 ├── tests/
 ├── .pre-commit-config.yaml
 ├── .github/workflows/ci.yml
 └── pyproject.toml         # uv-managed, includes [tool.poe.tasks]
 ```
 
-`src/` is the standard Python "src layout" convention — it prevents tests from accidentally importing an uninstalled local copy of the package instead of the properly installed one. The importable package name is `etl` (not `receipt_etl`), since this repo builds exactly one pipeline and the extra prefix would be redundant inside it.
+`src/` is the standard Python "src layout" convention — it prevents tests from accidentally importing an uninstalled local copy of the package instead of the properly installed one. The importable package name is `etl`, since this repo builds exactly one pipeline and the extra prefix would be redundant inside it.
 
 ---
 
 ## Phase 1 — Repo & schema foundation _(no dependencies)_ — ✅ done
 
 - [x] `uv init`, set up `pyproject.toml`, lockfile. Named commands added to `pyproject.toml`'s `[tool.poe.tasks]` (see "Named commands" above): `submodule:init`, `submodule:update`, `gen:types`, `bootstrap`, `test`, `lint`, `format`.
-- [x] Added `receipt-core` as a git submodule at `vendor/receipt-core`, pinned to its commit at add-time. First-time setup is `uv run poe submodule:init`. Deliberately bumping the pinned schema version later is `uv run poe submodule:update`.
-- [x] `uv run poe gen:types` runs `datamodel-codegen` against `vendor/receipt-core/schemas/*.schema.json`, output into `src/etl/types/`. Confirmed schema path matches `receipt-core`'s `docs/SCHEMA.md`.
+- [x] Added `vela-core` as a git submodule at `vendor/vela-core`, pinned to its commit at add-time. First-time setup is `uv run poe submodule:init`. Deliberately bumping the pinned schema version later is `uv run poe submodule:update`.
+- [x] `uv run poe gen:types` runs `datamodel-codegen` against `vendor/vela-core/schemas/*.schema.json`, output into `src/etl/types/`. Confirmed schema path matches `vela-core`'s `docs/SCHEMA.md`.
 - [x] Round-trip test (`tests/test_generated_types.py`): generated types construct a valid instance and reject an invalid one (missing required field) — covers `Store` and `Receipt` (with nested `LineItem`).
-- [x] `pre-commit` set up with `ruff-check --fix` + `ruff-format`, matching `receipt-core`'s lint-staged convention. Hook installed and verified to actually rewrite bad code.
+- [x] `pre-commit` set up with `ruff-check --fix` + `ruff-format`, matching `vela-core`'s lint-staged convention. Hook installed and verified to actually rewrite bad code.
 - [x] `.github/workflows/ci.yml` set up: runs `uv run poe lint` and `uv run poe test` on push/PR, with submodule checkout.
 
 **Blocks:** everything else. Extract, Transform, and Load all use the generated types.
@@ -89,16 +89,16 @@ receipt-etl/
 
 - Implement `reconcile`, `validate`, `shape`, `emit` as pure functions per the design doc's rules (sentinels, `flagged_reason` values, `line_order`).
 - `shape` computes `content_hash` via stdlib `hashlib` as a pure function of `store_id + transaction_ref + date + total`.
-- `validate`, and re-validation against `receipt-core`'s JSON Schema before Load, uses `pydantic` or `jsonschema`, per the design doc's tool inventory. Pick one as the primary validator. Both may end up in use for different purposes: `pydantic` for shape and types, `jsonschema` for validating raw dicts against the vendored schema files directly. If so, document why in code comments.
-- Test with hand-built `ExtractionResult` fixtures — no real extractors, no `receipt-api`, needed to exercise this stage.
+- `validate`, and re-validation against `vela-core`'s JSON Schema before Load, uses `pydantic` or `jsonschema`, per the design doc's tool inventory. Pick one as the primary validator. Both may end up in use for different purposes: `pydantic` for shape and types, `jsonschema` for validating raw dicts against the vendored schema files directly. If so, document why in code comments.
+- Test with hand-built `ExtractionResult` fixtures — no real extractors, no `vela-api`, needed to exercise this stage.
 - Cover: single extractor (pass-through), agreeing extractors (zero review rows), disagreeing extractors (one review row per extractor), validation failures, total-failure input.
 
 ---
 
-## Phase 4 — Mock receipt-api & Load client _(depends on Phase 1, blocks nothing else)_
+## Phase 4 — Mock vela-api & Load client _(depends on Phase 1, blocks nothing else)_
 
-- Sketch a minimal OpenAPI spec for the combined-payload write endpoint. Per `receipt-core`'s `docs/SCHEMA.md`, the extractor interface has two sides, and the payload must carry both. Successfully extracted data goes into `stores` / `receipts` / `line_items` together. `store` is not a separate concern from `receipt`. Both belong in the same success path, since the pipeline starts from a bare photo with no pre-existing store row to reference. Anything uncertain or wrong (low confidence, disagreement, a missed item) goes into `extraction_reviews` instead, for the same underlying extracted content. So the payload has two parts, written atomically: store + receipt + nested line_items for the success path, and extraction_reviews for the uncertain/failure path. `DESIGN-V3.md`'s Load section omits `store` from its version of this list. Confirm and correct there too before finalizing the spec.
-- `receipt-etl` sends the extracted store data with each receipt, unconditionally. It has no database connection, per this repo's own architecture.
+- Sketch a minimal OpenAPI spec for the combined-payload write endpoint. Per `vela-core`'s `docs/SCHEMA.md`, the extractor interface has two sides, and the payload must carry both. Successfully extracted data goes into `stores` / `receipts` / `line_items` together. `store` is not a separate concern from `receipt`. Both belong in the same success path, since the pipeline starts from a bare photo with no pre-existing store row to reference. Anything uncertain or wrong (low confidence, disagreement, a missed item) goes into `extraction_reviews` instead, for the same underlying extracted content. So the payload has two parts, written atomically: store + receipt + nested line_items for the success path, and extraction_reviews for the uncertain/failure path. `DESIGN-V3.md`'s Load section omits `store` from its version of this list. Confirm and correct there too before finalizing the spec.
+- `vela-etl` sends the extracted store data with each receipt, unconditionally. It has no database connection, per this repo's own architecture.
 - Build the standalone FastAPI mock app (`mock_api/`) implementing that spec — success path, "already exists" (duplicate `content_hash`) response, validation-error response.
 - Build the `httpx`-based Load client in `src/etl/load/` against the spec.
 - Unit tests via `respx`, mocking the same success/duplicate/validation-error paths.
@@ -140,10 +140,10 @@ receipt-etl/
 - Unit tests per stage (Extract adapters, each Transform function, Load client) — fast, isolated.
 - Fixtures: synthetic/faker-generated receipt images and data only. No real personal receipts committed to the repo, consistent with the data-minimization/privacy stance in the design doc.
 - Integration tier: full pipeline against the standalone mock app (Phase 4/6).
-- The team defers real `receipt-api` integration until that service exists. Swapping the mock's base URL for the real one should require no code change, per the design doc's stated build order.
+- The team defers real `vela-api` integration until that service exists. Swapping the mock's base URL for the real one should require no code change, per the design doc's stated build order.
 
 ---
 
 ## Notes for later
 
-- Confirm the exact path to `receipt-core`'s JSON Schema files inside the submodule once the submodule is added. The design doc references `docs/SCHEMA.md` and `schemas/` in `receipt-core`, but check the concrete file layout directly rather than assume it. Update the `gen:types` script in "Named commands" above if the path differs.
+- Confirm the exact path to `vela-core`'s JSON Schema files inside the submodule once the submodule is added. The design doc references `docs/SCHEMA.md` and `schemas/` in `vela-core`, but check the concrete file layout directly rather than assume it. Update the `gen:types` script in "Named commands" above if the path differs.

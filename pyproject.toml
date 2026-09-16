@@ -1,7 +1,7 @@
 [project]
-name = "receipt-etl"
+name = "vela-etl"
 version = "0.1.0"
-description = "Ingestion/extraction pipeline for the Receipt Intelligence Platform"
+description = "Ingestion/extraction pipeline for Vela (Receipt Intelligence Platform)"
 authors = [
     { name = "Muiz Haruna", email = "hmuiyze@gmail.com" }
 ]
@@ -36,11 +36,11 @@ extend-exclude = ["src/etl/types"]
 [tool.poe.tasks]
 "submodule:init" = "git submodule update --init --recursive"
 "submodule:update" = [
-    { cmd = "git -C vendor/receipt-core fetch" },
-    { cmd = "git -C vendor/receipt-core checkout ${NEW_COMMIT}" },
-    { cmd = "git add vendor/receipt-core" },
+    { cmd = "git -C vendor/vela-core fetch" },
+    { cmd = "git -C vendor/vela-core checkout ${NEW_COMMIT}" },
+    { cmd = "git add vendor/vela-core" },
 ]
-"gen:types" = "datamodel-codegen --input vendor/receipt-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black"
+"gen:types" = "datamodel-codegen --input vendor/vela-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black"
 bootstrap = ["submodule:init", "gen:types"]
 test = "pytest"
 pretest = "bootstrap"

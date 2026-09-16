@@ -6,20 +6,20 @@ Working notes from design discussion, covering Extract → Transform → Load. I
 
 ## Architecture context
 
-**This section supersedes an earlier assumption.** Originally assumed `receipt-etl` connects directly to Postgres, since `receipt-core` is just schema/migrations, not a running service. The `receipt-etl` README has since been updated and states the opposite:
+**This section supersedes an earlier assumption.** Originally assumed `vela-etl` connects directly to Postgres, since `vela-core` is just schema/migrations, not a running service. The `vela-etl` README has since been updated and states the opposite:
 
-- `receipt-etl` does **not** connect to `receipt-core`'s database directly.
-- `receipt-etl` writes structured data **and review resolutions** via `receipt-api` — i.e. `receipt-api` is not read-only after all; it exposes write endpoints too (create receipt/line_items/extraction_reviews, resolve a review).
-- This resolves the earlier open gap about where manual review resolution lives: it's `receipt-api`'s job (it has the dashboard + now the write path), not `receipt-etl`'s.
-- Consequence for `receipt-etl`: no DB credentials, no Postgres driver/query builder needed. It needs an HTTP client for `receipt-api` instead.
-- New explicit scope constraint (from the updated README): `receipt-etl` **only extracts fields defined in `receipt-core`'s schema — nothing beyond that is captured or retained.**
-- **Decision: contract between `receipt-etl` and `receipt-api` will be an OpenAPI spec.** Since these are genuinely separate services now, something has to define request/response shapes both sides agree on — generated TS types on the `receipt-etl` side, generated docs, and a natural pairing with the JSON Schema files already in `receipt-core` (request bodies would wrap/reference `receipt.schema.json` etc. rather than redefining shapes twice). `receipt-api` isn't built yet (weeks 5–7); sketching the OpenAPI spec early lets `receipt-etl`'s Load step build against a real contract instead of guessed shapes.
+- `vela-etl` does **not** connect to `vela-core`'s database directly.
+- `vela-etl` writes structured data **and review resolutions** via `vela-api` — i.e. `vela-api` is not read-only after all; it exposes write endpoints too (create receipt/line_items/extraction_reviews, resolve a review).
+- This resolves the earlier open gap about where manual review resolution lives: it's `vela-api`'s job (it has the dashboard + now the write path), not `vela-etl`'s.
+- Consequence for `vela-etl`: no DB credentials, no Postgres driver/query builder needed. It needs an HTTP client for `vela-api` instead.
+- New explicit scope constraint (from the updated README): `vela-etl` **only extracts fields defined in `vela-core`'s schema — nothing beyond that is captured or retained.**
+- **Decision: contract between `vela-etl` and `vela-api` will be an OpenAPI spec.** Since these are genuinely separate services now, something has to define request/response shapes both sides agree on — generated TS types on the `vela-etl` side, generated docs, and a natural pairing with the JSON Schema files already in `vela-core` (request bodies would wrap/reference `receipt.schema.json` etc. rather than redefining shapes twice). `vela-api` isn't built yet (weeks 5–7); sketching the OpenAPI spec early lets `vela-etl`'s Load step build against a real contract instead of guessed shapes.
 
 **Still open:**
 
-- What `receipt-api`'s write contract actually looks like — per-table REST endpoints (`POST /receipts`, `POST /line-items`, `POST /extraction-reviews`) vs. one combined endpoint taking a whole shaped receipt+line_items+reviews payload.
-- Who validates against `receipt-core`'s JSON schemas — `receipt-etl` before sending, `receipt-api` on receipt, or (most likely) both, with `receipt-etl` shaping correctly and `receipt-api` re-validating since it can't fully trust every caller.
-- Where the `content_hash` duplicate check now lives — this used to be `receipt-etl`'s job via Postgres's unique index; now it belongs to whoever implements `receipt-api`'s write endpoint. `receipt-etl` just calls the API and handles whatever response comes back (success, or "already exists").
+- What `vela-api`'s write contract actually looks like — per-table REST endpoints (`POST /receipts`, `POST /line-items`, `POST /extraction-reviews`) vs. one combined endpoint taking a whole shaped receipt+line_items+reviews payload.
+- Who validates against `vela-core`'s JSON schemas — `vela-etl` before sending, `vela-api` on receipt, or (most likely) both, with `vela-etl` shaping correctly and `vela-api` re-validating since it can't fully trust every caller.
+- Where the `content_hash` duplicate check now lives — this used to be `vela-etl`'s job via Postgres's unique index; now it belongs to whoever implements `vela-api`'s write endpoint. `vela-etl` just calls the API and handles whatever response comes back (success, or "already exists").
 
 ---
 
@@ -83,16 +83,16 @@ reconcile → validate → shape → emit
   - `receipts.customer_name` — need to confirm whether this is ever someone other than the person running the project (only matters if so).
   - `extras` (JSONB) — flagged as the one place worth double-checking for something like a partial card number, if any sample receipts contain one.
 - Given: purely local setup, no hosted dashboard currently planned, no real third-party exposure path — **decision: anonymization is not needed for now.**
-- Revisit if: the dashboard (`receipt-api`) or `receipt-agent` is ever hosted somewhere reachable by anyone other than the project owner.
-- **Action item:** `receipt-intelligence-platform`'s master-plan doc currently states redaction as a fact ("`receipt-etl` redacts personal details... before data reaches storage") — needs updating to match this decision.
+- Revisit if: the dashboard (`vela-api`) or `vela-agent` is ever hosted somewhere reachable by anyone other than the project owner.
+- **Action item:** `vela`'s master-plan doc currently states redaction as a fact ("`vela-etl` redacts personal details... before data reaches storage") — needs updating to match this decision.
 - If reversible redaction is ever reinstated: field-level (not whole-row) encryption was the preferred approach, with the key held separately from the data and decryption treated as a permissioned, logged action — not automatic on read.
 
-## Load (revised — writes now go through `receipt-api`, not direct Postgres)
+## Load (revised — writes now go through `vela-api`, not direct Postgres)
 
-- `receipt-etl` calls `receipt-api` over HTTP to write the shaped receipt, line items, and extraction_reviews — no DB driver, no DB credentials on the `receipt-etl` side.
-- **Duplicate check via `content_hash`** (unique index on `receipts` in the actual schema, to catch cases like a single physical receipt photographed twice) is now enforced on `receipt-api`'s side. `receipt-etl` only _computes_ the hash (a pure function of `store_id + transaction_ref + date + total`, done during Shape) — it has no way to check whether that hash already exists, since it no longer holds a DB connection at all. The actual accept/reject decision belongs entirely to `receipt-api`, since it's the only thing that can see what's already stored. `receipt-etl` just sends the request and handles whatever comes back — success, or an "already exists" response.
-- Contract for these calls is being defined via an **OpenAPI spec**, shared between `receipt-etl` and `receipt-api`, so both sides build against the same agreed shapes rather than guessing.
-- Still open: per-table endpoints vs. one combined payload endpoint (see Architecture context above); who validates against `receipt-core`'s JSON schemas (likely both sides).
+- `vela-etl` calls `vela-api` over HTTP to write the shaped receipt, line items, and extraction_reviews — no DB driver, no DB credentials on the `vela-etl` side.
+- **Duplicate check via `content_hash`** (unique index on `receipts` in the actual schema, to catch cases like a single physical receipt photographed twice) is now enforced on `vela-api`'s side. `vela-etl` only _computes_ the hash (a pure function of `store_id + transaction_ref + date + total`, done during Shape) — it has no way to check whether that hash already exists, since it no longer holds a DB connection at all. The actual accept/reject decision belongs entirely to `vela-api`, since it's the only thing that can see what's already stored. `vela-etl` just sends the request and handles whatever comes back — success, or an "already exists" response.
+- Contract for these calls is being defined via an **OpenAPI spec**, shared between `vela-etl` and `vela-api`, so both sides build against the same agreed shapes rather than guessing.
+- Still open: per-table endpoints vs. one combined payload endpoint (see Architecture context above); who validates against `vela-core`'s JSON schemas (likely both sides).
 
 ## Language
 
@@ -101,7 +101,7 @@ reconcile → validate → shape → emit
 
 ## Still open / unresolved
 
-1. ~~Where does manual review resolution live~~ — **resolved**: `receipt-api`, via its write endpoints. `receipt-etl` never touches review resolution.
-2. `receipt-api`'s write contract shape — per-table endpoints vs. one combined payload endpoint. Needs the OpenAPI spec sketched out.
-3. Who validates against `receipt-core`'s JSON schemas — likely both `receipt-etl` (shaping correctly before sending) and `receipt-api` (re-validating, since it can't fully trust every caller).
+1. ~~Where does manual review resolution live~~ — **resolved**: `vela-api`, via its write endpoints. `vela-etl` never touches review resolution.
+2. `vela-api`'s write contract shape — per-table endpoints vs. one combined payload endpoint. Needs the OpenAPI spec sketched out.
+3. Who validates against `vela-core`'s JSON schemas — likely both `vela-etl` (shaping correctly before sending) and `vela-api` (re-validating, since it can't fully trust every caller).
 4. Confirm whether `receipts.customer_name` or anything in `extras` is ever someone else's sensitive data, now that anonymization has been dropped.
