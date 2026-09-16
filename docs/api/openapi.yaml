@@ -1,0 +1,195 @@
+openapi: 3.1.0
+info:
+  title: vela-api ingestion endpoint (sketch)
+  version: 0.1.0
+  description: >
+    Minimal sketch of the combined-payload write endpoint vela-etl builds
+    against. vela-api does not exist yet, so this spec is vela-etl's stated
+    expectation, not a contract vela-api has agreed to. It is provisional
+    and will be revised, possibly with breaking changes, once vela-api's
+    real implementation exists. See docs/IMPLEMENTATION-PLAN.md Phase 4 and
+    docs/design/DESIGN-V3.md's Load section. A standalone FastAPI mock
+    (mock_api/) implements this spec so vela-etl can be built and tested
+    end-to-end in the meantime.
+
+paths:
+  /ingestions:
+    post:
+      summary: Write one extracted receipt, atomically, with any review rows
+      description: >
+        Always carries store + receipt (with nested line_items), since
+        vela-etl has no database connection and cannot look up an existing
+        store row. extraction_reviews is optional and may be empty — it
+        holds rows for anything the pipeline was not confident about, for
+        the same receipt. Written atomically: store, receipt, line_items,
+        and extraction_reviews all succeed or all fail together.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestionRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionCreated'
+        '409':
+          description: Duplicate receipt (content_hash already exists)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionDuplicate'
+        '422':
+          description: Payload failed validation against the vela-core schema
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestionValidationError'
+
+components:
+  schemas:
+    IngestionRequest:
+      type: object
+      required: [store, receipt]
+      properties:
+        store:
+          $ref: '#/components/schemas/StoreInput'
+        receipt:
+          $ref: '#/components/schemas/ReceiptInput'
+        extraction_reviews:
+          description: >
+            Rows matching vela-core's extraction_review.schema.json for this
+            same receipt (id and receipt_id omitted; vela-api assigns them).
+            Optional; omitted or empty when nothing needs review.
+          type: array
+          items:
+            $ref: '#/components/schemas/ExtractionReviewInput'
+          default: []
+
+    StoreInput:
+      description: >
+        vela-core's store.schema.json with id omitted — vela-api assigns it.
+      type: object
+      required: [name, address]
+      properties:
+        name: { type: string }
+        address: { type: string }
+        phone: { type: [string, 'null'] }
+        email: { type: [string, 'null'] }
+        website: { type: [string, 'null'] }
+
+    ReceiptInput:
+      description: >
+        vela-core's receipt.schema.json with id and store_id omitted —
+        vela-api assigns id, and infers store_id from the store above.
+      type: object
+      required: [source_image_id, transaction_ref, date, total, content_hash]
+      properties:
+        source_image_id: { type: string }
+        transaction_ref: { type: string }
+        transaction_ref_label: { type: [string, 'null'] }
+        register_ref: { type: [string, 'null'] }
+        date: { type: string, format: date }
+        time: { type: [string, 'null'], format: time }
+        staff_name: { type: [string, 'null'] }
+        customer_name: { type: [string, 'null'] }
+        payment_method: { type: [string, 'null'] }
+        subtotal: { type: [number, 'null'] }
+        discount: { type: [number, 'null'] }
+        vat: { type: [number, 'null'] }
+        consumption_tax: { type: [number, 'null'] }
+        total: { type: number }
+        total_in_words: { type: [string, 'null'] }
+        content_hash:
+          type: string
+          description: >
+            Fingerprint of key receipt fields, unique per receipt. Guards
+            against the same physical receipt being ingested twice.
+        extras:
+          type: [object, 'null']
+          additionalProperties: true
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItemInput'
+
+    LineItemInput:
+      description: >
+        vela-core's line_item.schema.json with id and receipt_id omitted —
+        vela-api assigns id and infers receipt_id from the receipt above.
+      type: object
+      required: [description, quantity, unit_price, line_total, line_order]
+      properties:
+        description: { type: string }
+        quantity: { type: number }
+        unit_price: { type: number }
+        line_total: { type: number }
+        line_order: { type: integer }
+
+    ExtractionReviewInput:
+      description: >
+        vela-core's extraction_review.schema.json with id and receipt_id
+        omitted — vela-api assigns id and infers receipt_id from the receipt
+        above.
+      type: object
+      required:
+        [field_name, extractor_source, confidence_score, flagged_reason, status]
+      properties:
+        line_item_id:
+          type: [string, 'null']
+          format: uuid
+          description: >
+            Set only if this review is about a specific line item that was
+            actually created (i.e. not the missing_line_item sentinel case).
+        field_name: { type: string }
+        extractor_source: { type: string }
+        extracted_value: { type: [string, 'null'] }
+        confidence_score: { type: number, minimum: 0, maximum: 1 }
+        flagged_reason:
+          type: string
+          enum:
+            [low_confidence, conflicting_extractions, validation_failed, illegible, manual_flag]
+        extractor_notes: { type: [string, 'null'] }
+        status:
+          type: string
+          enum: [pending, resolved, rejected]
+
+    IngestionCreated:
+      type: object
+      required: [status, receipt_id]
+      properties:
+        status:
+          type: string
+          enum: [created]
+        receipt_id:
+          type: string
+          format: uuid
+        store_id:
+          type: string
+          format: uuid
+
+    IngestionDuplicate:
+      type: object
+      required: [status, existing_receipt_id]
+      properties:
+        status:
+          type: string
+          enum: [duplicate]
+        existing_receipt_id:
+          type: string
+          format: uuid
+
+    IngestionValidationError:
+      type: object
+      required: [status, errors]
+      properties:
+        status:
+          type: string
+          enum: [validation_error]
+        errors:
+          type: array
+          items:
+            type: string
