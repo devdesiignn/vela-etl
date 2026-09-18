@@ -21,6 +21,7 @@ dev = [
     "pre-commit>=4.0",
     "datamodel-code-generator>=0.26",
     "poethepoet>=0.29",
+    "pyright>=1.1",
 ]
 
 [build-system]
@@ -32,6 +33,16 @@ module-name = "etl"
 
 [tool.ruff]
 extend-exclude = ["src/etl/types"]
+
+[tool.pyright]
+include = ["src", "tests", "mock_api"]
+exclude = [
+    "src/etl/types",
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+]
+typeCheckingMode = "strict"
 
 [tool.poe.tasks]
 "submodule:init" = "git submodule update --init --recursive"
@@ -46,4 +57,5 @@ test = "pytest"
 pretest = "bootstrap"
 lint = "ruff check ."
 format = "ruff format ."
+"lint:types" = "pyright"
 "mock-api" = "uvicorn mock_api.app:app --port 2222 --reload"
