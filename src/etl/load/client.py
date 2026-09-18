@@ -32,7 +32,7 @@ class Duplicate:
 
 @dataclass
 class ValidationError:
-    errors: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list[str])
     status: Literal["validation_error"] = "validation_error"
 
 
@@ -75,14 +75,15 @@ class LoadClient:
         response = self._client.post("/ingestions", json=payload)
 
         if response.status_code == 201:
-            body = response.json()
+            body: dict[str, Any] = response.json()
             return Created(receipt_id=body["receipt_id"], store_id=body["store_id"])
         if response.status_code == 409:
             body = response.json()
             return Duplicate(existing_receipt_id=body["existing_receipt_id"])
         if response.status_code == 422:
             body = response.json()
-            return ValidationError(errors=body.get("errors", []))
+            errors: list[str] = body.get("errors", [])
+            return ValidationError(errors=errors)
 
         response.raise_for_status()
         raise RuntimeError(f"Unexpected response from vela-api: {response.status_code}")

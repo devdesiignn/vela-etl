@@ -1,3 +1,6 @@
+from typing import Any
+from uuid import UUID
+
 import pytest
 from pydantic import ValidationError
 
@@ -11,19 +14,19 @@ from etl.extract.types import (
 )
 from etl.transform import emit, reconcile, shape, validate
 
-RECEIPT_ID = "44d21dc0-ada2-4b24-9ad4-91800c4922a9"
-STORE_ID = "6105a8cf-f678-48da-8ce2-89cfe24fb61a"
+RECEIPT_ID = UUID("44d21dc0-ada2-4b24-9ad4-91800c4922a9")
+STORE_ID = UUID("6105a8cf-f678-48da-8ce2-89cfe24fb61a")
 
 
 def _result(
     source: str,
     *,
-    store_fields: dict,
-    receipt_fields: dict,
-    line_items: list[dict],
-    store_confidence: dict | None = None,
-    receipt_confidence: dict | None = None,
-    line_item_confidence: list[dict] | None = None,
+    store_fields: dict[str, Any],
+    receipt_fields: dict[str, Any],
+    line_items: list[dict[str, Any]],
+    store_confidence: dict[str, float] | None = None,
+    receipt_confidence: dict[str, float] | None = None,
+    line_item_confidence: list[dict[str, float]] | None = None,
 ) -> ExtractionResult:
     return ExtractionResult(
         source=source,
@@ -40,14 +43,17 @@ def _result(
     )
 
 
-STORE_FIELDS = {"name": "Supreme Pharmacy", "address": "12 Ikorodu Rd, Lagos"}
-RECEIPT_FIELDS = {
+STORE_FIELDS: dict[str, Any] = {
+    "name": "Supreme Pharmacy",
+    "address": "12 Ikorodu Rd, Lagos",
+}
+RECEIPT_FIELDS: dict[str, Any] = {
     "source_image_id": "img_001",
     "transaction_ref": "INV-2026-0042",
     "date": "2026-01-15",
     "total": 300.0,
 }
-LINE_ITEM = {
+LINE_ITEM: dict[str, Any] = {
     "description": "Paracetamol 500mg",
     "quantity": 2,
     "unit_price": 150.0,
@@ -1123,7 +1129,7 @@ def test_validate_flags_nonzero_total_with_zero_line_items():
     # A receipt with a nonzero total but zero resolved line items is almost
     # certainly an extraction failure -- every item was missed. Must be
     # flagged, not silently skipped because there's nothing to sum.
-    resolved = {
+    resolved: dict[str, Any] = {
         "store": STORE_FIELDS,
         "receipt": {**RECEIPT_FIELDS, "total": 300.0},
         "line_items": [],
@@ -1142,7 +1148,7 @@ def test_validate_does_not_flag_zero_total_with_zero_line_items():
     # A receipt with total=0 and zero line items is not obviously wrong (a
     # voided/zero-value transaction) -- only a *nonzero* total with no items
     # is the suspicious case worth flagging.
-    resolved = {
+    resolved: dict[str, Any] = {
         "store": STORE_FIELDS,
         "receipt": {**RECEIPT_FIELDS, "total": 0.0},
         "line_items": [],
@@ -1295,7 +1301,7 @@ def test_shape_filters_id_receipt_id_line_order_collisions_from_item_fields():
 
     assert len(line_items) == 1
     # shape()'s own assignments win -- not the colliding values from item_fields.
-    assert str(line_items[0].receipt_id) == RECEIPT_ID
+    assert line_items[0].receipt_id == RECEIPT_ID
     assert line_items[0].line_order == 1
     assert str(line_items[0].id) != "some-other-id"
     assert line_items[0].description == LINE_ITEM["description"]

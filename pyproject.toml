@@ -21,6 +21,7 @@ dev = [
     "pre-commit>=4.0",
     "datamodel-code-generator>=0.26",
     "poethepoet>=0.29",
+    "pyright>=1.1",
 ]
 
 [build-system]
@@ -33,6 +34,16 @@ module-name = "etl"
 [tool.ruff]
 extend-exclude = ["src/etl/types"]
 
+[tool.pyright]
+include = ["src", "tests", "mock_api"]
+exclude = [
+    "src/etl/types",
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+]
+typeCheckingMode = "strict"
+
 [tool.poe.tasks]
 "submodule:init" = "git submodule update --init --recursive"
 "submodule:update" = [
@@ -40,10 +51,11 @@ extend-exclude = ["src/etl/types"]
     { cmd = "git -C vendor/vela-core checkout ${NEW_COMMIT}" },
     { cmd = "git add vendor/vela-core" },
 ]
-"gen:types" = "datamodel-codegen --input vendor/vela-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black"
+"gen:types" = "datamodel-codegen --input vendor/vela-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black --use-annotated"
 bootstrap = ["submodule:init", "gen:types"]
 test = "pytest"
 pretest = "bootstrap"
 lint = "ruff check ."
 format = "ruff format ."
+"lint:types" = "pyright"
 "mock-api" = "uvicorn mock_api.app:app --port 2222 --reload"

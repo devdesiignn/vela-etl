@@ -15,7 +15,8 @@ since both ultimately read from the same source files.
 from __future__ import annotations
 
 import hashlib
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
 from etl.types.line_item_schema import LineItem
 from etl.types.receipt_schema import Receipt
@@ -23,7 +24,7 @@ from etl.types.store_schema import Store
 
 
 def _content_hash(
-    *, store_id: str, transaction_ref: str, date: object, total: object
+    *, store_id: UUID, transaction_ref: str, date: object, total: object
 ) -> str:
     # Join order/format is load-bearing: it must stay stable across runs,
     # since this is the sole dedup key vela-api checks receipts against.
@@ -32,10 +33,10 @@ def _content_hash(
 
 
 def shape(
-    resolved: dict,
+    resolved: dict[str, Any],
     *,
-    store_id: str,
-    receipt_id: str,
+    store_id: UUID,
+    receipt_id: UUID,
 ) -> tuple[Store, Receipt, list[LineItem]]:
     """Split resolved candidate values into shaped Store/Receipt/LineItem records."""
     store_fields = resolved.get("store", {})
@@ -77,7 +78,7 @@ def shape(
     excluded_line_item_fields = {"id", "receipt_id", "line_order"}
     line_items = [
         LineItem(
-            id=str(uuid4()),
+            id=uuid4(),
             receipt_id=receipt_id,
             line_order=index,
             **{

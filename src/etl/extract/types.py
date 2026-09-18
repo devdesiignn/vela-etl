@@ -63,8 +63,8 @@ FieldConfidence = dict[str, float]
 class Confidence(BaseModel):
     store: FieldConfidence = Field(default_factory=dict)
     receipt: FieldConfidence = Field(default_factory=dict)
-    line_items: list[FieldConfidence] = Field(default_factory=list)
-    """Positional: line_items[i] holds confidence scores for candidate.line_items[i]."""
+    # Positional: line_items[i] holds confidence scores for candidate.line_items[i].
+    line_items: list[FieldConfidence] = Field(default_factory=list[FieldConfidence])
 
 
 class ExtractionResult(BaseModel):

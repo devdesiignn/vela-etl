@@ -8,9 +8,10 @@ flagged_reason="validation_failed".
 
 from __future__ import annotations
 
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
-from etl.types.extraction_review_schema import ExtractionReview
+from etl.types.extraction_review_schema import ExtractionReview, FlaggedReason, Status
 
 _TOLERANCE = 0.01
 
@@ -56,13 +57,13 @@ def _mismatch_confidence(*, actual: float, expected: float) -> float:
 
 def _validation_row(
     *,
-    receipt_id: str,
+    receipt_id: UUID,
     field_name: str,
-    line_item_id: str | None = None,
+    line_item_id: UUID | None = None,
     confidence_score: float = 0.0,
 ) -> ExtractionReview:
     return ExtractionReview(
-        id=str(uuid4()),
+        id=uuid4(),
         receipt_id=receipt_id,
         line_item_id=line_item_id,
         field_name=field_name,
@@ -73,18 +74,18 @@ def _validation_row(
         # field has no "how far off" to measure, so it stays 0.0 (certain).
         # An arithmetic mismatch scales via _mismatch_confidence instead.
         confidence_score=confidence_score,
-        flagged_reason="validation_failed",
-        status="pending",
+        flagged_reason=FlaggedReason.validation_failed,
+        status=Status.pending,
     )
 
 
-def validate(resolved: dict, *, receipt_id: str) -> list[ExtractionReview]:
+def validate(resolved: dict[str, Any], *, receipt_id: UUID) -> list[ExtractionReview]:
     """Check internal consistency of reconcile()'s resolved candidate values."""
     reviews: list[ExtractionReview] = []
 
-    store = resolved.get("store", {})
-    receipt = resolved.get("receipt", {})
-    line_items = resolved.get("line_items", [])
+    store: dict[str, Any] = resolved.get("store", {})
+    receipt: dict[str, Any] = resolved.get("receipt", {})
+    line_items: list[dict[str, Any]] = resolved.get("line_items", [])
 
     for field_name in _REQUIRED_STORE_FIELDS:
         if store.get(field_name) in (None, ""):
@@ -105,10 +106,10 @@ def validate(resolved: dict, *, receipt_id: str) -> list[ExtractionReview]:
                     _validation_row(receipt_id=receipt_id, field_name=field_name)
                 )
 
-        quantity = item.get("quantity")
-        unit_price = item.get("unit_price")
-        line_total = item.get("line_total")
-        if None not in (quantity, unit_price, line_total):
+        quantity: float | None = item.get("quantity")
+        unit_price: float | None = item.get("unit_price")
+        line_total: float | None = item.get("line_total")
+        if quantity is not None and unit_price is not None and line_total is not None:
             expected_total = quantity * unit_price
             if abs(expected_total - line_total) >= _TOLERANCE:
                 reviews.append(
@@ -125,8 +126,9 @@ def validate(resolved: dict, *, receipt_id: str) -> list[ExtractionReview]:
     # figure: subtotal directly, or total minus consumption_tax when subtotal
     # itself wasn't resolved. Comparing against total alone (tax included)
     # would spuriously flag a mismatch on every ordinary taxed receipt.
-    subtotal = receipt.get("subtotal")
-    total = receipt.get("total")
+    subtotal: float | None = receipt.get("subtotal")
+    total: float | None = receipt.get("total")
+    expected_line_total: float | None
     if subtotal is not None:
         expected_line_total = subtotal
     elif total is not None:

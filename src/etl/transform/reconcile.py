@@ -11,11 +11,23 @@ the values in the list it was handed.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from difflib import SequenceMatcher
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
-from etl.extract.types import ExtractionResult
-from etl.types.extraction_review_schema import ExtractionReview
+from etl.extract.types import (
+    CandidateLineItem,
+    CandidateReceipt,
+    CandidateStore,
+    ExtractionResult,
+    FieldConfidence,
+)
+from etl.types.extraction_review_schema import ExtractionReview, FlaggedReason, Status
+
+_Candidate = CandidateStore | CandidateReceipt | CandidateLineItem
+"""reconcile() treats all three identically via getattr/model_fields_set,
+never branching on which one it holds."""
 
 # Candidate.line_items is the authoritative line-items list for reconciliation.
 # Items are matched across extractors by normalized description, not list
@@ -25,8 +37,8 @@ from etl.types.extraction_review_schema import ExtractionReview
 # from mirroring Receipt's shape.
 
 
-def _distinct(values: list) -> list:
-    seen = []
+def _distinct(values: list[Any]) -> list[Any]:
+    seen: list[Any] = []
     for value in values:
         if value not in seen:
             seen.append(value)
@@ -35,23 +47,23 @@ def _distinct(values: list) -> list:
 
 def _conflict_rows(
     *,
-    receipt_id: str,
+    receipt_id: UUID,
     field_name: str,
-    line_item_id: str | None,
-    per_extractor_values: list[tuple[str, object, float]],
+    line_item_id: UUID | None,
+    per_extractor_values: list[tuple[str, Any, float]],
     extractor_notes: str | None = None,
 ) -> list[ExtractionReview]:
     return [
         ExtractionReview(
-            id=str(uuid4()),
+            id=uuid4(),
             receipt_id=receipt_id,
             line_item_id=line_item_id,
             field_name=field_name,
             extractor_source=source,
             extracted_value=None if value is None else str(value),
             confidence_score=confidence,
-            flagged_reason="conflicting_extractions",
-            status="pending",
+            flagged_reason=FlaggedReason.conflicting_extractions,
+            status=Status.pending,
             extractor_notes=extractor_notes,
         )
         for source, value, confidence in per_extractor_values
@@ -61,13 +73,13 @@ def _conflict_rows(
 def _reconcile_fields(
     *,
     sources: list[str],
-    candidates: list,
-    confidences: list[dict],
+    candidates: Sequence[_Candidate],
+    confidences: list[FieldConfidence],
     field_names: set[str],
-    receipt_id: str,
-    line_item_id: str | None = None,
+    receipt_id: UUID,
+    line_item_id: UUID | None = None,
     extractor_notes: str | None = None,
-) -> tuple[dict, list[ExtractionReview]]:
+) -> tuple[dict[str, Any], list[ExtractionReview]]:
     """Resolve each field name across aligned (source, candidate, confidence) triples.
 
     A field resolves when every candidate agrees; otherwise one conflict row
@@ -76,7 +88,7 @@ def _reconcile_fields(
     extractor candidates" over a different set of (candidate, confidence)
     pairs.
     """
-    resolved: dict = {}
+    resolved: dict[str, Any] = {}
     reviews: list[ExtractionReview] = []
 
     for field_name in field_names:
@@ -109,11 +121,15 @@ def _reconcile_section(
     results: list[ExtractionResult],
     *,
     section: str,
-    receipt_id: str,
-) -> tuple[dict, list[ExtractionReview]]:
+    receipt_id: UUID,
+) -> tuple[dict[str, Any], list[ExtractionReview]]:
     """Reconcile one flat candidate section (store or receipt) across extractors."""
-    candidates = [getattr(result.candidate, section) for result in results]
-    confidences = [getattr(result.confidence, section) for result in results]
+    candidates: list[_Candidate] = [
+        getattr(result.candidate, section) for result in results
+    ]
+    confidences: list[FieldConfidence] = [
+        getattr(result.confidence, section) for result in results
+    ]
 
     field_names: set[str] = set()
     for candidate in candidates:
@@ -146,17 +162,20 @@ def _description_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+_LineItemMatch = tuple[CandidateLineItem, FieldConfidence]
+
+
 class _Group:
     __slots__ = ("description_key", "matches")
 
     def __init__(self, description_key: str) -> None:
         self.description_key = description_key
-        self.matches: dict[int, tuple] = {}
+        self.matches: dict[int, _LineItemMatch] = {}
 
 
 def _group_line_items_by_description(
     results: list[ExtractionResult],
-) -> list[dict[int, tuple]]:
+) -> list[dict[int, _LineItemMatch]]:
     """Match line items across extractors by description, not list position.
 
     Each item is assigned to a group one at a time: first, an existing group
@@ -238,15 +257,15 @@ def _find_open_group(
 def _reconcile_line_items(
     results: list[ExtractionResult],
     *,
-    receipt_id: str,
-) -> tuple[list[dict], list[ExtractionReview]]:
+    receipt_id: UUID,
+) -> tuple[list[dict[str, Any]], list[ExtractionReview]]:
     if not results:
         return [], []
 
     sources = [result.source for result in results]
     groups = _group_line_items_by_description(results)
 
-    resolved_items: list[dict] = []
+    resolved_items: list[dict[str, Any]] = []
     reviews: list[ExtractionReview] = []
 
     for position, group in enumerate(groups, start=1):
@@ -268,15 +287,15 @@ def _reconcile_line_items(
                 if i not in present_indices:
                     reviews.append(
                         ExtractionReview(
-                            id=str(uuid4()),
+                            id=uuid4(),
                             receipt_id=receipt_id,
                             line_item_id=None,
                             field_name="missing_line_item",
                             extractor_source=source,
                             extracted_value=None,
                             confidence_score=0.0,
-                            flagged_reason="conflicting_extractions",
-                            status="pending",
+                            flagged_reason=FlaggedReason.conflicting_extractions,
+                            status=Status.pending,
                             extractor_notes=position_note,
                         )
                     )
@@ -302,15 +321,15 @@ def _reconcile_line_items(
                 if len(results) > 1:
                     reviews.append(
                         ExtractionReview(
-                            id=str(uuid4()),
+                            id=uuid4(),
                             receipt_id=receipt_id,
                             line_item_id=None,
                             field_name="line_item",
                             extractor_source=source,
                             extracted_value=item.description,
                             confidence_score=confidence.get("description", 0.0),
-                            flagged_reason="low_confidence",
-                            status="pending",
+                            flagged_reason=FlaggedReason.low_confidence,
+                            status=Status.pending,
                             extractor_notes=position_note,
                         )
                     )
@@ -343,8 +362,8 @@ def _reconcile_line_items(
 def reconcile(
     results: list[ExtractionResult],
     *,
-    receipt_id: str,
-) -> tuple[dict, list[ExtractionReview]]:
+    receipt_id: UUID,
+) -> tuple[dict[str, Any], list[ExtractionReview]]:
     """Reconcile a list of ExtractionResults into one resolved candidate + review rows."""
     store_resolved, store_reviews = _reconcile_section(
         results, section="store", receipt_id=receipt_id
