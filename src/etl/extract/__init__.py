@@ -1,3 +1,5 @@
+from etl.extract.orchestrator import run_extractors, split_results
+from etl.extract.protocol import Extractor, Image
 from etl.extract.types import (
     Candidate,
     CandidateLineItem,
@@ -15,5 +17,9 @@ __all__ = [
     "CandidateStore",
     "Confidence",
     "ExtractionResult",
+    "Extractor",
     "FieldConfidence",
+    "Image",
+    "run_extractors",
+    "split_results",
 ]

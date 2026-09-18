@@ -73,17 +73,19 @@ vela-etl/
 
 **Blocks:** everything else. Extract, Transform, and Load all use the generated types.
 
-**Not yet started:** Phase 2's orchestrator (the `ExtractionResult`/`Candidate` types below are already in place), Phase 5 (first real adapters), Phase 6 (end-to-end wiring), Phase 7 (remaining adapters & hardening).
+**Not yet started:** Phase 5 (first real adapters), Phase 6 (end-to-end wiring), Phase 7 (remaining adapters & hardening).
 
 ---
 
-## Phase 2 — Extractor interface & orchestrator
+## Phase 2 — Extractor interface & orchestrator — ✅ done
 
 - [x] `ExtractionResult`, `Candidate`/`CandidateStore`/`CandidateReceipt`/`CandidateLineItem`, and `Confidence` types defined with `pydantic` in `src/etl/extract/types.py`, per the design doc's Extract/Transform tool inventory.
-- [ ] Extractor `Protocol` (`extract(image) -> ExtractionResult`) itself is not yet defined.
-- [ ] Orchestrator: takes a config-driven list of extractors, runs each, returns the results list unchanged in shape regardless of count (1 or N).
-- [ ] Total-failure path: an extractor can return an `extraction_reviews`-shaped row directly instead of an `ExtractionResult`.
-- [ ] Test against hand-written stub extractors only — no real OCR/vision-LLM adapters yet. This isolates orchestration logic from adapter correctness.
+- [x] Extractor `Protocol` (`extract(image) -> ExtractionResult | ExtractionReview`) defined in `src/etl/extract/protocol.py`, plus an `Image = bytes` alias (loose on purpose — no real adapter exists yet).
+- [x] Orchestrator (`src/etl/extract/orchestrator.py`): `run_extractors` takes a config-driven list of extractors, runs each, returns the results list unchanged in shape regardless of count (1 or N).
+- [x] Total-failure path: an extractor can return an `extraction_reviews`-shaped row directly instead of an `ExtractionResult`. `split_results` partitions the orchestrator's mixed output into `(list[ExtractionResult], list[ExtractionReview])`, since `reconcile()` (Phase 3) only ever accepts `ExtractionResult`s — confirmed the total-failure sentinel itself (`field_name="receipt"` + `flagged_reason="extraction_failed"`) required a `vela-core` schema addition; resolved upstream in commit `1619173`, submodule pin bumped and types regenerated. See `docs/DECISIONS.md`'s "Total-failure `ExtractionReview` shape" entry.
+- [x] Tested against hand-written stub extractors only (`tests/test_extract.py`, 9 tests) — no real OCR/vision-LLM adapters yet. This isolates orchestration logic from adapter correctness.
+
+**Not yet handled (correctly out of scope for this phase):** consuming Load's `IngestionResult` (`Created`/`Duplicate`/`ValidationError`) or its unexpected-HTTP-error path — the orchestrator only runs extractors, upstream of Transform and Load. That's Phase 6's job (end-to-end wiring), which has no caller for `LoadClient.ingest()` yet.
 
 ---
 
@@ -103,7 +105,7 @@ vela-etl/
 - [x] `vela-etl` sends the extracted store data with each receipt, unconditionally. It has no database connection, per this repo's own architecture. `LoadClient` strips server-assigned `id`/`store_id`/`receipt_id` fields from the outgoing payload — `vela-api` mints those, not `vela-etl`.
 - [x] Built the standalone FastAPI mock app (`mock_api/app.py`) implementing that spec — success (`201`) path, duplicate (`409`, in-memory `content_hash` tracking) path, validation-error (`422`) path. Run locally via `uv run poe mock-api` (port `2222`, distinct from `vela-core`'s Postgres on `1111`).
 - [x] Built the `httpx`-based Load client (`src/etl/load/client.py`) against the spec — `LoadClient.ingest(store, receipt, extraction_reviews=None)` returns one of three typed results (`Created`/`Duplicate`/`ValidationError`), context-manager support for connection cleanup.
-- [x] Unit tests (`tests/test_load_client.py`) via `respx`, covering success, payload shape (ids stripped), reviews-included, duplicate, and validation-error paths.
+- [x] Unit tests (`tests/test_load.py`) via `respx`, covering success, payload shape (ids stripped), reviews-included, duplicate, and validation-error paths.
 - [x] Manual smoke test: ran the mock app locally via `uvicorn`, pointed `LoadClient` at it, confirmed a real HTTP round trip for both the created and duplicate paths.
 
 ---
@@ -122,7 +124,14 @@ vela-etl/
 
 - Compose orchestrator → transform → load into the full pipeline.
 - Config-driven extractor selection (which extractors run for a given input).
-- Integration test: run a real image fixture through the real adapters from Phase 5, then transform, then Load against the mock app. Assert on what the mock received.
+- **Wire the orchestrator's total-failure split into the review pipeline.** `split_results()` (Phase 2, `src/etl/extract/orchestrator.py`) partitions the orchestrator's raw output into `(extraction_results, total_failure_reviews)`. Today nothing calls it and nothing consumes `total_failure_reviews` — no code merges it into the final review list that reaches `emit()`. This phase must add that merge (e.g. into `emit()`'s existing `reconcile_reviews`/`validate_reviews` inputs, or a third input), so a total-failure `ExtractionReview` row actually reaches Load instead of silently going nowhere.
+- **Integration test — the pipeline must work stage-to-stage, not just within each stage.** Unit tests exist per stage today (`test_extract.py`, `test_transform.py`, `test_load.py`), but nothing currently proves one stage's real output is actually consumable by the next. Audited during Phase 2 work and confirmed this gap is real: `test_extract.py` never imports or calls `reconcile`/`validate`/`shape`/`emit`, so nothing proves `split_results()`'s `extraction_results` list is a valid `reconcile()` input, or that its `total_failure_reviews` list correctly reaches the final review set. This phase's integration test must run the full chain through and through, end to end:
+  1. Real image fixture → real adapters (Phase 5) → `run_extractors()` → `split_results()`.
+  2. `extraction_results` → `reconcile()` → `validate()` → `shape()` → `emit()`.
+  3. `total_failure_reviews` (if any fired) → confirmed present in the final review set `emit()` produces, not dropped.
+  4. `EmitResult` → `LoadClient.ingest()` → mock `vela-api`. Assert on what the mock actually received (store, receipt, line_items, and the full combined `extraction_reviews`, including any total-failure rows).
+
+  Every arrow above needs its own assertion — the point is proving each stage's actual output shape satisfies the next stage's actual input contract, not just that each stage passes its own isolated unit tests.
 
 ---
 
