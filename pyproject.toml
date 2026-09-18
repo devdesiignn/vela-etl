@@ -40,7 +40,7 @@ extend-exclude = ["src/etl/types"]
     { cmd = "git -C vendor/vela-core checkout ${NEW_COMMIT}" },
     { cmd = "git add vendor/vela-core" },
 ]
-"gen:types" = "datamodel-codegen --input vendor/vela-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black"
+"gen:types" = "datamodel-codegen --input vendor/vela-core/schemas --input-file-type jsonschema --output src/etl/types --output-model-type pydantic_v2.BaseModel --formatters black --use-annotated"
 bootstrap = ["submodule:init", "gen:types"]
 test = "pytest"
 pretest = "bootstrap"
