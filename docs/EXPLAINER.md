@@ -517,7 +517,7 @@ standing submodule-pin-update rule from §2.2 pulled the fix back in.
 ### 4.4 What's deliberately *not* here yet
 
 No real extractor exists yet — no `pytesseract`, no AWS Textract, no
-Claude/GPT-4V vision calls. `tests/test_orchestrator.py` uses small
+Claude/GPT-4V vision calls. `tests/test_extract.py` uses small
 hand-written stub classes instead, each just returning a canned
 `ExtractionResult` or `ExtractionReview` without doing any real image
 processing.
@@ -890,7 +890,7 @@ doesn't require re-learning the controls.
 
 ### 6.4 Tests: `respx`, not the mock app
 
-`tests/test_load_client.py` doesn't start the FastAPI mock app for its
+`tests/test_load.py` doesn't start the FastAPI mock app for its
 automated tests — that's reserved for manual, by-hand testing. Instead it
 uses `respx`, a library that intercepts `httpx` calls directly in-process.
 
