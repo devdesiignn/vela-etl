@@ -1,6 +1,6 @@
 # Extract, Transform, and Load, explained for a new Python dev
 
-This walks through the four completed phases in `vela-etl` — **Phase 1**
+This walks through the completed phases in `vela-etl` — **Phase 1**
 (repo and schema foundation), **Extract**, **Transform**, and **Load** —
 plus the shared type layer that Phase 1 produces and that all three later
 stages depend on. It assumes you know JavaScript/TypeScript but are new to
@@ -9,11 +9,12 @@ isn't obvious from its syntax.
 
 Scope: this covers what's actually built and tested today — the project
 scaffolding and tooling, `src/etl/types/`, `src/etl/extract/`,
-`src/etl/transform/`, `src/etl/load/`, and `mock_api/`. Extract's *real*
-adapters (actual OCR/vision-LLM vendors turning a photo into raw guesses)
-are **not** covered here because they aren't implemented yet — only the
-interface and orchestrator that will run them are. See
-`docs/IMPLEMENTATION-PLAN.md` for current phase status.
+`src/etl/transform/`, `src/etl/load/`, and `mock_api/`. Extract now has two
+real adapters (Azure Document Intelligence, RapidOCR), covered in §4
+below alongside the interface and orchestrator that run them. The
+remaining adapters (EasyOCR, PaddleOCR, docTR, vision-LLMs) are not covered
+here, since they aren't implemented yet. See `docs/IMPLEMENTATION-PLAN.md`
+for current phase status.
 
 ---
 
@@ -328,21 +329,21 @@ back is already the typed object, not a separate parse step.
 
 Extract is the "hire some interns and hand them the receipt photo" stage —
 the part of the pipeline the newspaper analogy in §1 calls "the reporters."
-What's built today is the *interface and orchestration*: the shared contract
-every intern (extractor) must follow, and the code that runs however many
-interns the config lists and hands back a uniform list of their guesses.
-The interns themselves — real OCR engines, real vision-LLM calls — don't
-exist yet (that's Phase 5/7). Today's tests use hand-written stub interns
-instead, which is deliberate: it proves the orchestration logic works
-correctly *before* any real, flaky, network-dependent adapter exists to
-muddy that signal.
+Built and tested today: the shared contract every intern (extractor) must
+follow, the code that runs however many interns the config lists and hands
+back a uniform list of their guesses, and two real interns proving that
+contract holds against actual vendors. §4.1 to §4.3 below cover the
+contract and orchestration, tested against hand-written stub interns.
+§4.5 covers the two real adapters. The remaining interns — more OCR
+engines, real vision-LLM calls — don't exist yet (that's Phase 7).
 
 **Real-life analogy:** this is like writing the newspaper's editorial
 process — "every reporter files a story in this exact format, an editor
-collects all the filed stories into one folder" — and testing that process
-with placeholder stand-in reporters who always file predictable, canned
-copy, before the newsroom hires a single real reporter. You're proving the
-*process* works, independent of whether any specific reporter is any good.
+collects all the filed stories into one folder" — and proving that process
+works with placeholder stand-in reporters first, before sending two real
+reporters out into the field to prove the process holds up against an
+actual, unpredictable story. Only after both hold up does the newsroom
+scale to a full team of reporters.
 
 ### 4.1 `types.py` — what one intern's guess looks like
 
@@ -514,20 +515,90 @@ example of how `vela-etl` and `vela-core` stay in sync: building `vela-etl`
 surfaced a real gap, `vela-core` fixed it at the source of truth, and the
 standing submodule-pin-update rule from §2.2 pulled the fix back in.
 
-### 4.4 What's deliberately *not* here yet
+### 4.4 Why the orchestrator's own tests still use stubs
 
-No real extractor exists yet — no `pytesseract`, no AWS Textract, no
-Claude/GPT-4V vision calls. `tests/test_extract.py` uses small
-hand-written stub classes instead, each just returning a canned
+`tests/test_extract.py` tests `run_extractors`/`split_results` against
+small hand-written stub classes, each just returning a canned
 `ExtractionResult` or `ExtractionReview` without doing any real image
-processing.
+processing — even though real adapters exist now (§4.5).
 
-**Why test against stubs instead of waiting for a real adapter?** This is
-the same reasoning as mocking an HTTP call in a frontend test — you want to
-prove "does my orchestration logic correctly loop over N extractors and
-handle both return types" *without* that test also depending on network
-flakiness, API rate limits, or OCR accuracy. Those are separate concerns,
-tested separately, later (Phase 5/7), against real vendors.
+**Why test the orchestrator against stubs instead of the real adapters?**
+This is the same reasoning as mocking an HTTP call in a frontend test — you
+want to prove "does my orchestration logic correctly loop over N extractors
+and handle both return types" *without* that test also depending on
+network flakiness, API rate limits, or OCR accuracy. Those are separate
+concerns, and the real adapters' own test files (§4.5) cover them
+separately, against mocked vendor responses.
+
+### 4.5 Two real adapters: proving both ends of the effort spectrum
+
+Phase 5 built two real "interns," deliberately chosen to sit at opposite
+ends of how much work an adapter has to do: `AzureDocumentIntelligenceAdapter`
+(`src/etl/extract/adapters/azure_document_intelligence_adapter.py`) and
+`RapidOcrAdapter` (`src/etl/extract/adapters/rapidocr_adapter.py`).
+Both satisfy the exact same `Extractor` protocol from §4.2 — the
+orchestrator has no idea, and no need to know, which one it's running.
+
+**Real-life analogy:** picture hiring one seasoned wire-service reporter
+who already files copy in your paper's exact house style — you barely edit
+it — next to a sharp but junior local stringer who phones in raw notes from
+the scene that someone in the newsroom has to shape into a real story
+by hand. Both end up filing a usable story. One just needed far more
+newsroom effort to get there.
+
+**Azure Document Intelligence — the "easy" end.** Azure's `prebuilt-receipt`
+model already returns receipt-shaped data: merchant name, line items,
+totals, each with its own confidence score. The adapter's job is mostly
+renaming Azure's field names into `Candidate*` shapes. Two real gaps
+turned up only once this adapter ran against actual scanned receipts, not
+just the documented schema:
+
+- Azure sometimes reports a line item's `Quantity` and `TotalPrice` but
+  not its `Price` (unit price). Reporting `0.0` in that case would look
+  like clean data next to a valid line total, not like a gap. The
+  adapter derives it instead: `unit_price = TotalPrice / Quantity`, with
+  its own lower, distinguishable confidence score, since Azure never
+  actually reported that number.
+- Azure's `prebuilt-receipt` model has no invoice or transaction-reference
+  field at all — not "sometimes missing," structurally absent from that
+  model's schema. But `shape()` (§5.3) needs a `transaction_ref` to compute
+  `content_hash`, the fingerprint `vela-api` will use to catch duplicate
+  receipts. Two different receipts from the same store, on the same day,
+  for the same total, would otherwise hash identically and collide. The
+  adapter synthesizes a stable stand-in ref from a hash of the receipt's
+  own line items, so `content_hash` stays unique without needing a field
+  Azure never provides.
+
+**RapidOCR — the "hard" end.** RapidOCR is a plain Python package that runs
+ONNX OCR models in-process, with no system binary to install. Unlike Azure,
+it has no idea what a receipt even is — it returns scattered text boxes with
+no structure and no per-field confidence at all. The adapter first
+reconstructs physical printed lines from those boxes' coordinates. Getting a `Candidate` out of
+that text is entirely this project's own responsibility:
+
+- `src/etl/extract/preprocess.py` runs OpenCV image cleanup first —
+  straightening a tilted photo (deskew), boosting contrast, and removing
+  noise — since raw OCR accuracy is very sensitive to image quality.
+  **Real-life analogy:** this is like photocopying a smudged, slightly
+  crooked handwritten note before handing it to someone to transcribe —
+  cleaning it up first makes their job possible at all.
+- `src/etl/extract/adapters/ocr_text_parser.py` then runs regex and
+  positional heuristics over that raw text — "a line matching a money
+  pattern next to the word 'total' is probably the total," and so on — to
+  guess at store name, date, totals, and line items. This is intentionally
+  hand-written rather than a third-party receipt-parsing library, so this
+  adapter genuinely proves the manual-mapping end of the spectrum, not a
+  library's.
+- With no native confidence available, this adapter falls back entirely to
+  *derived* confidence: "was this field found at all," and for line items,
+  "does `quantity * unit_price` actually equal `line_total`."
+
+**Real extraction failure, not a stub.** Both adapters return an
+`ExtractionReview` directly, per §4.2's Extractor protocol, when there's
+truly nothing to reconcile — an undecodable image, an empty OCR result, or
+(for Azure) an API error. This is the exact same "dead lead, nothing to
+report" path the stub interns in §4.2 exercised, now backed by a real
+failure mode instead of a canned test case.
 
 ---
 
@@ -907,9 +978,9 @@ a human to manually click through an end-to-end flow.
 ```txt
                     ┌─────────────┐
 receipt photo  →    │   Extract   │  →  ExtractionResult(s) or ExtractionReview
-                    └─────────────┘     (one per "intern"/extractor; real
-                                          adapters NOT BUILT YET — stub
-                                          interns only)
+                    └─────────────┘     (one per "intern"/extractor; two
+                                          real adapters built — Azure
+                                          Document Intelligence, RapidOCR)
                                                    │
                                         split_results() separates the two
                                                    │
@@ -947,9 +1018,9 @@ receipt photo  →    │   Extract   │  →  ExtractionResult(s) or Extractio
                                           or mock_api (stand-in, built)
 ```
 
-**Extract** = the interns filing their stories (or calling in "I've got
-nothing" when the scene was unworkable) — today, canned stub interns for
-testing, not real reporters.
+**Extract** = the interns filing their stories, or calling in "I've got
+nothing" when the scene was unworkable — today, two real reporters (Azure
+Document Intelligence, RapidOCR), with more planned for later.
 
 **Transform** = the editor reconciling multiple reporters' drafts and
 fact-checking the numbers, entirely on paper, no phone calls made.

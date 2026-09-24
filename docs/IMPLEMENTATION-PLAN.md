@@ -73,7 +73,7 @@ vela-etl/
 
 **Blocks:** everything else. Extract, Transform, and Load all use the generated types.
 
-**Not yet started:** Phase 5 (first real adapters), Phase 6 (end-to-end wiring), Phase 7 (remaining adapters & hardening).
+**Not yet started:** Phase 6 (end-to-end wiring), Phase 7 (remaining adapters & hardening).
 
 ---
 
@@ -110,13 +110,13 @@ vela-etl/
 
 ---
 
-## Phase 5 — First real adapters _(depends on Phase 2)_
+## Phase 5 — First real adapters _(depends on Phase 2)_ — ✅ done
 
-- Implement two adapters to prove both ends of the adapter-effort spectrum:
-  - One cloud receipt-specific vendor (AWS Textract or Azure Document Intelligence) — least adapter work, output already receipt-shaped.
-  - `pytesseract` — most adapter work, raw text requiring manual mapping into the candidate shape.
-- Add `OpenCV`-based image preprocessing, such as deskew and contrast/threshold cleanup, ahead of the OCR adapter. General-purpose OCR accuracy is sensitive to image quality. This is Extract-stage work per the design doc's tool inventory, not deferred to a later phase.
-- Defer vision-LLM adapters (Claude/GPT-4V/Gemini, Ollama-hosted models) to Phase 7.
+- [x] `OpenCV`-based image preprocessing (`src/etl/extract/preprocess.py`): deskew via minimum-area-rect angle correction, then CLAHE contrast + denoise + adaptive threshold cleanup, ahead of the OCR adapter. Isolated and tested on its own (`tests/test_preprocess.py`), independent of any adapter.
+- [x] RapidOCR adapter (`src/etl/extract/adapters/rapidocr_adapter.py`) — most adapter work. Raw OCR text has no receipt structure and no native field confidence. A hand-written regex/heuristic line parser (`ocr_text_parser.py`) maps raw text to candidate fields. Tests check the parser alone against varied synthetic fixtures (clean, no-line-total, messy-with-discount) in `tests/test_ocr_text_parser.py`. Confidence comes from DESIGN-V3.md's third origin: derived, not native. Most fields score "found at all". Line items score on `quantity * unit_price == line_total` arithmetic agreement. No total, no line items, no date, empty OCR output, or an undecodable image all route to a total-failure `ExtractionReview` (`field_name="receipt"`, `flagged_reason="extraction_failed"`) instead of raising.
+- [x] Azure Document Intelligence adapter (`src/etl/extract/adapters/azure_document_intelligence_adapter.py`, `prebuilt-receipt` model, F0 tier) — least adapter work. Azure's output is already receipt-shaped, so this is mostly field renaming. Confidence comes from DESIGN-V3.md's second origin: native, taken directly from each Azure `DocumentField.confidence`. It falls back to a fixed middling score only when Azure omits that field. No documents returned, no `TransactionDate`, or a vendor API error (`AzureError`) all route to the same total-failure `ExtractionReview` shape as the RapidOCR adapter. Tests mock the SDK client entirely (`tests/test_azure_document_intelligence_adapter.py`). No live Azure credentials exist yet. Real credential wiring and a live smoke test stay open.
+- [x] Both adapters are plain classes satisfying the `Extractor` Protocol structurally — zero changes to `orchestrator.py`. Wiring them into an actual config-driven extractor list is Phase 6's job (end-to-end wiring), not this phase's.
+- Deferred to Phase 7: vision-LLM adapters (Claude/GPT-4V/Gemini, Ollama-hosted models), plus EasyOCR/PaddleOCR/docTR.
 
 ---
 
