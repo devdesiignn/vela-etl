@@ -18,7 +18,12 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 
-_MONEY = r"[$₦£€]?\s?(\d[\d,]*\.\d{2})"
+_CURRENCY = r"[$₦£€N≈]?"
+"""Currency prefixes seen in real OCR output. `N` and `≈` are both common
+OCR misreads of `₦` (Naira) — confirmed on real receipts, sometimes both on
+the same receipt, where one item's `₦` reads as `N` and another's as `≈`."""
+
+_MONEY = rf"{_CURRENCY}\s?(\d[\d,]*\.\d{{2}})"
 _TOTAL_LINE = re.compile(r"\btotal\b(?!.*subtotal)", re.IGNORECASE)
 _SUBTOTAL_LINE = re.compile(r"\bsub\s?-?total\b", re.IGNORECASE)
 _TAX_LINE = re.compile(r"\b(vat|tax)\b", re.IGNORECASE)
@@ -50,6 +55,18 @@ _ITEM_LINE = re.compile(
     rf"{_MONEY}\s*=?\s*{_MONEY}?$"
 )
 _ITEM_LINE_NO_QTY = re.compile(rf"^(?P<description>.+?)\s+{_MONEY}$")
+
+# Some POS receipts print one item across two physical lines: a numbered
+# description line ("#1:EVERYMAN MULTIVITAMIN"), then a quantity/price line
+# ("(3) Unit × N2,750.00 N8,250.00"). Confirmed on real receipts from one
+# pharmacy chain. Neither single-line item pattern above can match this
+# shape, so the parser checks consecutive line pairs for it.
+_ITEM_NUMBERED_DESCRIPTION = re.compile(r"^#\s?\d+\s*[:.]?\s*(?P<description>.+)$")
+_ITEM_QTY_PRICE_LINE = re.compile(
+    rf"^\(?(?P<quantity>\d+(?:\.\d+)?)\)?\s*(?:unit|pcs?|ea)?\s*[x×*]\s*"
+    rf"{_MONEY}\s*{_MONEY}?$",
+    re.IGNORECASE,
+)
 
 
 class ParsedReceipt:
@@ -87,7 +104,21 @@ def parse(raw_text: str) -> ParsedReceipt:
     result = ParsedReceipt()
 
     header_candidates: list[str] = []
-    for line in lines:
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+
+        # Two-line items are checked before anything else: the description
+        # half ("#1:EVERYMAN MULTIVITAMIN") would otherwise be taken as a
+        # header candidate, and the quantity/price half would be misread by
+        # _ITEM_LINE_NO_QTY as its own separate single-line item.
+        next_line = lines[index + 1] if index + 1 < len(lines) else None
+        paired = _parse_two_line_item(line, next_line)
+        if paired is not None:
+            result.line_items.append(paired)
+            index += 2
+            continue
+
         is_header_field = _apply_header_line(line, result)
         _apply_totals_line(line, result)
         item = _parse_item_line(line)
@@ -96,6 +127,7 @@ def parse(raw_text: str) -> ParsedReceipt:
 
         if not is_header_field and len(header_candidates) < 2:
             header_candidates.append(line)
+        index += 1
 
     if header_candidates:
         result.store_name = header_candidates[0]
@@ -172,6 +204,38 @@ def _apply_totals_line(line: str, result: ParsedReceipt) -> None:
 
 
 _TOTALS_LINE_PATTERNS = (_TOTAL_LINE, _SUBTOTAL_LINE, _TAX_LINE, _DISCOUNT_LINE)
+
+
+def _parse_two_line_item(line: str, next_line: str | None) -> ParsedLineItem | None:
+    """Matches an item printed across two physical lines: a numbered
+    description, then its quantity and prices. Returns None unless BOTH
+    halves match, so a numbered line that is not followed by a quantity
+    line falls through to the normal single-line handling."""
+    if next_line is None:
+        return None
+
+    description_match = _ITEM_NUMBERED_DESCRIPTION.match(line)
+    if description_match is None:
+        return None
+
+    qty_match = _ITEM_QTY_PRICE_LINE.match(next_line)
+    if qty_match is None:
+        return None
+
+    quantity = float(qty_match.group("quantity"))
+    unit_price = float(qty_match.group(2).replace(",", ""))
+    line_total_raw = qty_match.group(3)
+    line_total = (
+        float(line_total_raw.replace(",", ""))
+        if line_total_raw
+        else round(quantity * unit_price, 2)
+    )
+    return ParsedLineItem(
+        description=description_match.group("description").strip(),
+        quantity=quantity,
+        unit_price=unit_price,
+        line_total=line_total,
+    )
 
 
 def _parse_item_line(line: str) -> ParsedLineItem | None:

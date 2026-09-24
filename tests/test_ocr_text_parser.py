@@ -195,3 +195,59 @@ def test_parse_empty_string():
     assert result.store_name is None
     assert result.total is None
     assert result.line_items == []
+
+
+TWO_LINE_ITEM_TEXT = """ROTAMEDIC GRA OFFICE
+Date: 05/01/2026 13:48
+#1:EVERYMAN MULTIVITAMIN
+(3) Unit \u00d7 N2,750.00 N8,250.00
+#2: STREPSILS BY 2PCS
+(4) Unit \u00d7 N450.00 N1,800.00
+#3: FOLIC ACID BY 100 TABLETS
+(1) Unit \u00d7 N750.00 N750.00
+#4: ROBBINHALER
+(1) Unit \u00d7 N450.00 450.00
+#5: COD LVER OIL 1000MG SACHET
+(2) Unit \u00d7 \u2248700.00 N1,400.00
+Total N12,650.00
+Grand Total N12,650.00"""
+
+
+def test_parses_items_printed_across_two_lines():
+    """Regression, from real OCR output of a pharmacy-chain receipt: each
+    item prints as a numbered description line followed by a
+    '(qty) Unit x price total' line. Neither single-line item pattern
+    matches this shape, so the parser previously found 1 item on this
+    receipt instead of 5."""
+    result = parse(TWO_LINE_ITEM_TEXT)
+
+    assert len(result.line_items) == 5
+    assert result.total == 12650.0
+    assert result.store_name == "ROTAMEDIC GRA OFFICE"
+
+    first = result.line_items[0]
+    assert first.description == "EVERYMAN MULTIVITAMIN"
+    assert first.quantity == 3.0
+    assert first.unit_price == 2750.0
+    assert first.line_total == 8250.0
+
+
+def test_two_line_items_tolerate_ocr_naira_misreads():
+    """The Naira sign reads as a bare 'N' or as '\u2248' depending on the
+    photo — both appear on the same real receipt. A money value with no
+    currency prefix at all also occurs."""
+    result = parse(TWO_LINE_ITEM_TEXT)
+
+    by_description = {item.description: item for item in result.line_items}
+    # '\u2248700.00' — approx-sign misread of the Naira sign.
+    assert by_description["COD LVER OIL 1000MG SACHET"].unit_price == 700.0
+    # '450.00' — no currency prefix at all on the line total.
+    assert by_description["ROBBINHALER"].line_total == 450.0
+
+
+def test_numbered_line_without_a_quantity_line_is_not_swallowed():
+    """A '#N:' line not followed by a quantity/price line must fall through
+    to normal single-line handling, not consume the next line blindly."""
+    result = parse("Corner Store\n2026-01-15\n#1: SOME ITEM\nTotal 500.00")
+
+    assert result.total == 500.0
