@@ -28,3 +28,6 @@ build/
 # would duplicate every file, since core.symlinks is false here.
 .agents/
 .claude/
+
+# Debug sweep outputs from scripts/sweep_receipts.py
+debug_sweep_batch_*.txt

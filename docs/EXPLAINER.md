@@ -592,6 +592,38 @@ that text is entirely this project's own responsibility:
 - With no native confidence available, this adapter falls back entirely to
   *derived* confidence: "was this field found at all," and for line items,
   "does `quantity * unit_price` actually equal `line_total`."
+- The adapter reads each photo more than once and keeps the best result. It
+  runs OCR on the raw image and on the cleaned-up one, because neither wins
+  reliably. A well-lit photo sometimes reads worse after cleanup, and a dim
+  or skewed one sometimes only reads after it. When a photo looks sideways,
+  it also tries the three quarter turns. **Real-life analogy:** this is
+  turning a page around in your hands until the writing faces the right way,
+  then keeping whichever angle you could actually read.
+
+**Partial reads go to review, not into the database.** Testing this adapter
+against 28 real receipt photos showed the failure that matters is not a
+crash. It is a receipt that looks extracted but is not. A missing total
+became `0.00`, which is indistinguishable from a free receipt. A parse that
+found 1 of 5 line items reported success. Six checks now separate a real
+extraction from a partial one, and the partial ones become review rows:
+
+- no total and no line items at all
+- no date
+- line items present, but no total
+- a total present, but no line items
+- a total that read as literal `0.00` next to real line items
+- line items that do not add up to the total
+
+That last check is the strongest one. A receipt is arithmetic, so the items
+must sum to the total. When they do not, the parser missed an item, invented
+one, or misread an amount, even though every field looks plausible on its
+own. **Real-life analogy:** this is the same instinct as checking a
+restaurant bill by adding the dishes yourself. You do not need to know the order to
+see that the bill is wrong.
+
+Of those 28 photos, 12 extract cleanly and 16 route to review. That ratio is
+the honest measure of this adapter today, and per §1 the pipeline exists to
+report that number rather than hide it.
 
 **Real extraction failure, not a stub.** Both adapters return an
 `ExtractionReview` directly, per §4.2's Extractor protocol, when there's

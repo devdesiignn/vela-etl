@@ -5,10 +5,13 @@ import cv2
 import numpy as np
 from rapidocr.utils.output import RapidOCROutput
 
+# Both helpers are module-private by design — nothing outside the adapter
+# should call them — but each carries real logic worth testing directly:
+# box-geometry row reconstruction, and the sideways-photo signature.
 from etl.extract.adapters.rapidocr_adapter import (
     RapidOcrAdapter,
-    _group_boxes_into_lines,
-    _looks_rotated,
+    _group_boxes_into_lines,  # pyright: ignore[reportPrivateUsage]
+    _looks_rotated,  # pyright: ignore[reportPrivateUsage]
 )
 from etl.extract.types import ExtractionResult
 from etl.types.extraction_review_schema import ExtractionReview, FlaggedReason
@@ -55,7 +58,11 @@ def _mock_ocr_result(txts: tuple[str, ...] | None) -> RapidOCROutput:
         ],
         dtype=np.float64,
     )
-    return RapidOCROutput(txts=txts, boxes=boxes)
+    # rapidocr annotates RapidOCROutput.txts as Tuple[str] — a one-element
+    # tuple — where the runtime plainly returns one entry per detected box.
+    # The upstream annotation means tuple[str, ...]; ignore it rather than
+    # reshape real test data around a typo in a dependency.
+    return RapidOCROutput(txts=txts, boxes=boxes)  # pyright: ignore[reportArgumentType]
 
 
 def test_group_boxes_into_lines_merges_same_row_boxes():

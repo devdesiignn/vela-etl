@@ -13,7 +13,7 @@ you point them at. Committed synthetic fixtures live in
 Runs `RapidOcrAdapter` over a range of receipt images and writes one result
 line per receipt.
 
-```
+```bash
 uv run python scripts/sweep_receipts.py 0 28
 ```
 
@@ -29,7 +29,7 @@ while exiting 0. See `docs/DECISIONS.md`.
 
 Prints the grouped OCR lines for one image.
 
-```
+```bash
 uv run python scripts/dump_ocr_lines.py <path-to-image>
 ```
 
