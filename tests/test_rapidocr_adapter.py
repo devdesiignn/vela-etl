@@ -272,3 +272,44 @@ def test_extract_returns_review_when_total_parses_as_zero_with_line_items():
 
     assert isinstance(result, ExtractionReview)
     assert result.flagged_reason == FlaggedReason.extraction_failed
+
+
+def test_extract_returns_review_when_line_items_do_not_reconcile():
+    """Regression: the other gates detect an absent field, never a partial
+    read. A receipt whose line items do not sum to the total means the parse
+    missed, invented, or misread an item."""
+    adapter = RapidOcrAdapter(receipt_id=RECEIPT_ID)
+
+    with patch("etl.extract.adapters.rapidocr_adapter._engine") as mock_engine:
+        mock_engine.return_value = _mock_ocr_result(
+            (
+                "Corner Store",
+                "Date: 2026-01-30",
+                "Bread 1 x 200.00 = 200.00",
+                "Total 500.00",
+            )
+        )
+        result = adapter.extract(_valid_image())
+
+    assert isinstance(result, ExtractionReview)
+    assert result.flagged_reason == FlaggedReason.extraction_failed
+
+
+def test_extract_accepts_line_items_that_reconcile_with_the_total():
+    """The reconciliation gate must not reject a correct parse."""
+    adapter = RapidOcrAdapter(receipt_id=RECEIPT_ID)
+
+    with patch("etl.extract.adapters.rapidocr_adapter._engine") as mock_engine:
+        mock_engine.return_value = _mock_ocr_result(
+            (
+                "Corner Store",
+                "Date: 2026-01-30",
+                "Bread 1 x 200.00 = 200.00",
+                "Milk 2 x 150.00 = 300.00",
+                "Total 500.00",
+            )
+        )
+        result = adapter.extract(_valid_image())
+
+    assert isinstance(result, ExtractionResult)
+    assert result.candidate.receipt.total == 500.0

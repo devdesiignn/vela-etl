@@ -260,7 +260,25 @@ def _apply_totals_line(line: str, result: ParsedReceipt) -> None:
         result.total = value
 
 
-_TOTALS_LINE_PATTERNS = (_TOTAL_LINE, _SUBTOTAL_LINE, _TAX_LINE, _DISCOUNT_LINE)
+_PAYMENT_LINE = re.compile(
+    r"\b(?:cash|change|tendered|balance|card|pos|transfer|moniepoint|opay|"
+    r"paystack|flutterwave|bank|paid|payment)\b|\bnet\s*tot",
+    re.IGNORECASE,
+)
+"""Lines naming how the customer paid, or a total under a label the four
+patterns above miss. Confirmed against real receipts: a "CASH 8,800.00"
+payment line and a "Net Totnl 9,550.00" line (OCR of "Net Total") were both
+parsed as purchased items, each duplicating the receipt total as an extra
+line item. `net tot` is deliberately truncated to survive that OCR misread
+of the trailing "al"."""
+
+_TOTALS_LINE_PATTERNS = (
+    _TOTAL_LINE,
+    _SUBTOTAL_LINE,
+    _TAX_LINE,
+    _DISCOUNT_LINE,
+    _PAYMENT_LINE,
+)
 
 
 def _parse_two_line_item(line: str, next_line: str | None) -> ParsedLineItem | None:

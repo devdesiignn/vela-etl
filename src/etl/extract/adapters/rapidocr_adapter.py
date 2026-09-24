@@ -81,6 +81,11 @@ text. Named constant since every "field present" case here uses it."""
 _ARITHMETIC_MISMATCH_CONFIDENCE = 0.2
 _ARITHMETIC_TOLERANCE = 0.01
 
+_RECONCILIATION_TOLERANCE = 0.01
+"""How far the line-item sum may sit from the receipt total before the parse
+counts as partial. Kept at one cent: real receipts balance exactly, and a
+wider tolerance would admit a genuinely missed item on a low-value line."""
+
 _engine = RapidOCR()
 """Module-level singleton: RapidOCR() loads its ONNX models at construction
 time, an expensive one-time cost this adapter should pay once per process,
@@ -157,6 +162,24 @@ class RapidOcrAdapter:
             return self._failure_review(
                 "total parsed as 0.00 alongside line items — a misread total, "
                 "not a zero-value receipt"
+            )
+        # The gates above detect an absent field. This one detects a partial
+        # read: line items that do not add up to the total mean the parser
+        # missed an item, invented one, or misread an amount. Arithmetic is
+        # the only signal available for "how many items should there be,"
+        # since nothing else states the expected count.
+        #
+        # Receipts that show tax or a discount legitimately break this
+        # identity, so those adjust the expected sum. No receipt in the real
+        # 28-photo sample carried either, so that path is reasoned from the
+        # schema rather than confirmed against a photo.
+        item_sum = round(sum(item.line_total for item in parsed.line_items), 2)
+        expected = parsed.total - (parsed.tax or 0.0) + (parsed.discount or 0.0)
+        if abs(item_sum - round(expected, 2)) > _RECONCILIATION_TOLERANCE:
+            return self._failure_review(
+                f"line items sum to {item_sum:.2f}, which does not reconcile "
+                f"with the receipt total of {parsed.total:.2f} — the parse "
+                "missed, invented, or misread at least one item"
             )
 
         return self._to_extraction_result(parsed)

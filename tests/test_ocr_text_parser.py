@@ -284,3 +284,18 @@ def test_store_name_unchanged_when_no_stray_line_precedes_it():
 
     assert result.store_name == "MOMROTA PHARMACY"
     assert result.store_address == "SHOP 3 ABC PLAZA"
+
+
+def test_payment_lines_are_not_parsed_as_line_items():
+    """Regression: 'CASH 8,800.00' and 'Net Totnl 9,550.00' (OCR of "Net
+    Total") were parsed as purchased items, each duplicating the receipt
+    total and making the line items sum to a multiple of it."""
+    result = parse(
+        "MOMROTA PHARMACY\n2025-09-12\nASTYFER CAP 5,400.00\n"
+        "CASH 8,800.00\nMONIEPOINT PO: 8,800.00\nNet Totnl 8,800.00\n"
+        "Total 8,800.00"
+    )
+
+    descriptions = [item.description for item in result.line_items]
+    assert descriptions == ["ASTYFER CAP"]
+    assert result.total == 8800.0
