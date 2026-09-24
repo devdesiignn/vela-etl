@@ -320,3 +320,29 @@ discounts, where the sum legitimately differs from the total.
   `uv run poe lint`, `uv run pyright src` must all stay clean before
   calling a fix done. Passing that loop is still not sufficient on its
   own. Re-run the real-receipt batch too, every time.
+
+## OCR determinism: tested, and it holds
+
+An earlier note in this session claimed RapidOCR reads the same image
+differently between runs. **That claim was wrong.** A direct test of
+`20260423_211452.jpg` gave byte-identical output across six runs, three of
+them in separate processes: 41 boxes, same text, same order.
+
+The apparent difference came from two mistakes in method:
+
+1. This session compared two sweep outputs across an intervening parser
+   change. That parser change moved which lines survive as header
+   candidates, so the store name changed. The OCR did not.
+2. The debug dump script runs OCR only on the raw oriented image. The
+   adapter runs it **twice** — once on raw bytes, once on `preprocess()`'d
+   bytes — and keeps whichever parse recovers more fields. Raw OCR reads
+   `'SUPREME PHARMACY & STORI'` on that receipt. The preprocessed pass reads
+   `'SUPREME PHARMACY & STORE'` correctly, and the adapter reports that one.
+
+**Consequence for anyone debugging this adapter:** a raw OCR dump is not
+what the adapter parses. Confirm both passes before concluding that OCR
+misread something. A dump with garbled text may be the pass that loses.
+
+This also means `20260423_211452.jpg` is **not** an example of Open
+Problem 3's unfixable half. Whether any receipt in the sample still needs
+merchant fuzzy matching is now an open question, not an established fact.
