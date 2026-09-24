@@ -45,6 +45,18 @@ def normalize_orientation(image: Image) -> Image:
         return buf.getvalue()
 
 
+def rotate(image: Image, degrees: int) -> Image:
+    """Rotates the image counter-clockwise by whole degrees, expanding the
+    canvas so no content is cropped. Used to retry OCR on a photo taken
+    sideways: EXIF orientation only helps when the camera recorded a tag,
+    and a receipt photographed rotated on a flat surface carries none."""
+    with PILImage.open(io.BytesIO(image)) as opened:
+        rotated = opened.rotate(degrees, expand=True)
+        buf = io.BytesIO()
+        rotated.save(buf, format=opened.format or "PNG")
+        return buf.getvalue()
+
+
 def preprocess(image: Image) -> Image:
     try:
         oriented = normalize_orientation(image)

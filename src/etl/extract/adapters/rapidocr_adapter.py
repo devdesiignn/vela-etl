@@ -59,7 +59,7 @@ from etl.extract.adapters.ocr_text_parser import (
     ParsedReceipt,
     parse,
 )
-from etl.extract.preprocess import normalize_orientation, preprocess
+from etl.extract.preprocess import normalize_orientation, preprocess, rotate
 from etl.extract.protocol import Image, confidence_map, extraction_failed_review
 from etl.extract.types import (
     Candidate,
@@ -80,6 +80,17 @@ text. Named constant since every "field present" case here uses it."""
 
 _ARITHMETIC_MISMATCH_CONFIDENCE = 0.2
 _ARITHMETIC_TOLERANCE = 0.01
+
+_RETRY_ROTATIONS = (90, 180, 270)
+"""Quarter turns tried when a photo looks sideways. A receipt is rectangular
+and printed one way up, so only right angles are worth trying."""
+
+_ROTATION_MAX_LINES = 12
+_ROTATION_MIN_AVERAGE_LENGTH = 45.0
+"""Signature of a sideways photo, measured across 28 real receipts: upright
+ones give 18-40 grouped lines averaging 18-28 characters, sideways ones give
+4-9 lines averaging 59-90. Both conditions must hold, so a short receipt
+with normal-length lines does not trigger a retry."""
 
 _RECONCILIATION_TOLERANCE = 0.01
 """How far the line-item sum may sit from the receipt total before the parse
@@ -107,7 +118,7 @@ class RapidOcrAdapter:
 
         candidates: list[ParsedReceipt] = []
 
-        raw_parsed = self._run_ocr(oriented)
+        raw_parsed, raw_lines = self._run_ocr_with_lines(oriented)
         if raw_parsed is not None:
             candidates.append(raw_parsed)
 
@@ -121,6 +132,27 @@ class RapidOcrAdapter:
             preprocessed_parsed = self._run_ocr(cleaned)
             if preprocessed_parsed is not None:
                 candidates.append(preprocessed_parsed)
+
+        # A photo taken sideways still OCRs legibly, but the box geometry is
+        # rotated, so _group_boxes_into_lines() reads across the receipt
+        # instead of down it. The result collapses into a few very long
+        # lines. Measured across 28 real photos: upright receipts give 18-40
+        # lines averaging 18-28 characters, while sideways ones give 4-9
+        # lines averaging 59-90. Retrying the quarter turns only when that
+        # signature appears keeps the extra OCR cost off normal receipts.
+        #
+        # Each rotation only ever adds another candidate. The best-parse
+        # selection below still decides, so a rotation that reads worse is
+        # ignored rather than preferred.
+        if _looks_rotated(raw_lines):
+            for degrees in _RETRY_ROTATIONS:
+                try:
+                    turned = rotate(oriented, degrees)
+                except (UnidentifiedImageError, OSError):
+                    continue
+                rotated_parsed = self._run_ocr(turned)
+                if rotated_parsed is not None:
+                    candidates.append(rotated_parsed)
 
         if not candidates:
             return self._failure_review(
@@ -185,24 +217,34 @@ class RapidOcrAdapter:
         return self._to_extraction_result(parsed)
 
     def _run_ocr(self, image: Image) -> ParsedReceipt | None:
+        parsed, _ = self._run_ocr_with_lines(image)
+        return parsed
+
+    def _run_ocr_with_lines(
+        self, image: Image
+    ) -> tuple[ParsedReceipt | None, list[str]]:
+        """Parsed receipt plus the grouped lines it came from. The caller
+        uses the lines to test for a sideways photo without paying for
+        another OCR pass over the same image."""
         try:
             ocr_result = _engine(image)
         except UnidentifiedImageError:
-            return None
+            return None, []
         if not isinstance(ocr_result, RapidOCROutput):
             # _engine() is always called with det/cls/rec all enabled (the
             # defaults), so this only guards against a future config change
             # that narrows the pipeline and changes the return type.
-            return None
+            return None, []
 
         if not ocr_result.txts or ocr_result.boxes is None:
-            return None
+            return None, []
 
-        raw_text = "\n".join(_group_boxes_into_lines(ocr_result.boxes, ocr_result.txts))
+        lines = _group_boxes_into_lines(ocr_result.boxes, ocr_result.txts)
+        raw_text = "\n".join(lines)
         if not raw_text.strip():
-            return None
+            return None, lines
 
-        return parse(raw_text)
+        return parse(raw_text), lines
 
     def _failure_review(self, notes: str) -> ExtractionReview:
         return extraction_failed_review(
@@ -327,6 +369,17 @@ def _group_boxes_into_lines(boxes: np.ndarray, txts: tuple[str, ...]) -> list[st
         row.sort(key=lambda i: lefts[i])
         lines.append(" ".join(txts[i] for i in row))
     return lines
+
+
+def _looks_rotated(lines: list[str]) -> bool:
+    """True when OCR grouped into few, unusually long lines — the signature
+    of a photo taken sideways, where the grouping reads across the receipt
+    rather than down it."""
+    if not lines or len(lines) > _ROTATION_MAX_LINES:
+        return False
+
+    average_length = sum(len(line) for line in lines) / len(lines)
+    return average_length >= _ROTATION_MIN_AVERAGE_LENGTH
 
 
 def _recovered_field_count(parsed: ParsedReceipt) -> int:

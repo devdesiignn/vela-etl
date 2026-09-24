@@ -8,6 +8,7 @@ from rapidocr.utils.output import RapidOCROutput
 from etl.extract.adapters.rapidocr_adapter import (
     RapidOcrAdapter,
     _group_boxes_into_lines,
+    _looks_rotated,
 )
 from etl.extract.types import ExtractionResult
 from etl.types.extraction_review_schema import ExtractionReview, FlaggedReason
@@ -313,3 +314,20 @@ def test_extract_accepts_line_items_that_reconcile_with_the_total():
 
     assert isinstance(result, ExtractionResult)
     assert result.candidate.receipt.total == 500.0
+
+
+def test_looks_rotated_detects_few_long_lines():
+    """A sideways photo groups into few, unusually long lines, because the
+    grouping reads across the receipt rather than down it."""
+    assert _looks_rotated(["x" * 100, "y" * 100, "z" * 100])
+
+
+def test_looks_rotated_ignores_a_normal_upright_receipt():
+    """Measured across 28 real photos: upright receipts give 18-40 lines
+    averaging 18-28 characters. Those must not trigger a rotation retry."""
+    assert not _looks_rotated(["Supreme Pharmacy", "Total 300.00"] * 12)
+
+
+def test_looks_rotated_ignores_a_short_receipt_with_normal_lines():
+    """Few lines alone is not the signature — the lines must also be long."""
+    assert not _looks_rotated(["Corner Store", "2026-01-15", "Total 500.00"])
