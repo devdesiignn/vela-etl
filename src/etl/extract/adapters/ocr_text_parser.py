@@ -125,14 +125,16 @@ def parse(raw_text: str) -> ParsedReceipt:
         if item is not None:
             result.line_items.append(item)
 
-        if not is_header_field and len(header_candidates) < 2:
+        if not is_header_field and len(header_candidates) < _HEADER_LOOKAHEAD:
             header_candidates.append(line)
         index += 1
 
-    if header_candidates:
-        result.store_name = header_candidates[0]
-    if len(header_candidates) > 1:
-        result.store_address = header_candidates[1]
+    store_name_index = _pick_store_name_index(header_candidates)
+    if store_name_index is not None:
+        result.store_name = header_candidates[store_name_index]
+        remaining = header_candidates[store_name_index + 1 :]
+        if remaining:
+            result.store_address = remaining[0]
 
     if result.total is None and result.subtotal is not None:
         # Some real receipts print only a "SUB TOTAL" line with no separate
@@ -142,6 +144,61 @@ def parse(raw_text: str) -> ParsedReceipt:
         result.total = result.subtotal
 
     return result
+
+
+_HEADER_LOOKAHEAD = 4
+"""How many leading non-field lines to consider when picking the store name.
+More than the two the parser needs (name and address), so a stray OCR
+fragment above the real name does not push the address out of range."""
+
+_MIN_STORE_NAME_LENGTH = 6
+"""Shortest plausible printed store name. Real strays seen on receipts are
+shorter than this ("RM", "X", "fire"); real names are longer."""
+
+
+def _store_name_score(line: str) -> float:
+    """How much this line looks like a printed store name rather than a
+    stray OCR fragment. Confirmed against real receipts: a short fragment
+    often appears directly above the real name ("RM" above "ROTAMEDIC GRA
+    OFFICE"), so taking the first non-field line blindly picks the stray.
+
+    A printed store sign is set in large type, so OCR reads it as a longer
+    run of mostly letters, usually capitalised. A stray is short, or heavy
+    in digits and punctuation. This cannot repair a name OCR misread
+    outright ("SUPREME PHARMACY & STORI") — only prefer the better of the
+    candidate lines actually present."""
+    stripped = line.strip()
+    if len(stripped) < _MIN_STORE_NAME_LENGTH:
+        return 0.0
+
+    letters = sum(character.isalpha() for character in stripped)
+    if letters == 0:
+        return 0.0
+
+    letter_ratio = letters / len(stripped)
+    uppercase_letters = sum(
+        character.isupper() for character in stripped if character.isalpha()
+    )
+    uppercase_ratio = uppercase_letters / letters
+
+    # Length helps up to a point: a full address line is longer than a store
+    # name but should not outscore it, so the length term saturates.
+    length_score = min(len(stripped), 30) / 30
+    return letter_ratio * 2 + uppercase_ratio + length_score
+
+
+def _pick_store_name_index(candidates: list[str]) -> int | None:
+    """Index of the candidate line that best looks like a store name, or
+    None when no candidate is plausible. Ties keep the earliest line, since
+    the store name is normally printed first."""
+    best_index: int | None = None
+    best_score = 0.0
+    for index, candidate in enumerate(candidates):
+        score = _store_name_score(candidate)
+        if score > best_score:
+            best_index = index
+            best_score = score
+    return best_index
 
 
 def _apply_header_line(line: str, result: ParsedReceipt) -> bool:

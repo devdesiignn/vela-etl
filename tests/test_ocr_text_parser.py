@@ -251,3 +251,36 @@ def test_numbered_line_without_a_quantity_line_is_not_swallowed():
     result = parse("Corner Store\n2026-01-15\n#1: SOME ITEM\nTotal 500.00")
 
     assert result.total == 500.0
+
+
+def test_store_name_skips_short_stray_ocr_fragment():
+    """Regression, from real OCR output: a short stray fragment often sits
+    directly above the real store name ("RM" above "ROTAMEDIC GRA OFFICE").
+    Taking the first non-field line blindly picked the stray."""
+    result = parse(
+        "RM\nROTAMEDIC GRA OFFICE\nNo. 1, Office Rd., Ilorin\n"
+        "Date: 05/01/2026\nTotal 500.00"
+    )
+
+    assert result.store_name == "ROTAMEDIC GRA OFFICE"
+    assert result.store_address == "No. 1, Office Rd., Ilorin"
+
+
+def test_store_name_prefers_cleaner_of_two_garbled_candidates():
+    """Real receipts show a garbled partial duplicate above the real name.
+    The scoring prefers the longer, more letter-dense, more uppercase line."""
+    result = parse(
+        "Sor & thop\nMARTRITE SUPERSTORES\n10,Ahmadu Bello Way, GRA\n"
+        "26-Mar-26\nTotal 1,470.00"
+    )
+
+    assert result.store_name == "MARTRITE SUPERSTORES"
+
+
+def test_store_name_unchanged_when_no_stray_line_precedes_it():
+    """The scoring must not disturb receipts whose first header line is
+    already the real store name."""
+    result = parse("MOMROTA PHARMACY\nSHOP 3 ABC PLAZA\n2025-09-12\nTotal 8,800.00")
+
+    assert result.store_name == "MOMROTA PHARMACY"
+    assert result.store_address == "SHOP 3 ABC PLAZA"
