@@ -136,7 +136,7 @@ exists for each, in `tests/test_ocr_text_parser.py` or
 ## Open Problem 1: multi-column receipt layouts (not fixed)
 
 Receipt `20260113_204229.jpg` (from `debug_sweep_batch_3_6.txt`, or rerun
-`debug_sweep_incremental.py 3 6`) prints its line items in **side-by-side
+`scripts/sweep_receipts.py 3 6`) prints its line items in **side-by-side
 columns**, not top-to-bottom rows. The current output for this receipt is
 totally wrong (`store="Four thousand, one hundred and fifty naira only."`,
 `items=0`) — confirmed by the user directly reading the sweep output.
@@ -205,7 +205,7 @@ assuming the header heuristic itself needs to change.
 **The directory holds 28 receipts, not 27** — earlier notes undercounted by one.
 
 A full serial sweep of all 28 now exists. Run it with
-`uv run python debug_sweep_incremental.py 0 28` from the repo root, in a
+`uv run python scripts/sweep_receipts.py 0 28`, in a
 **single process**. Do not run batches concurrently: nine parallel processes
 produced 22 spurious `Unknown C++ exception from OpenCV code` crashes plus
 one batch that silently processed nothing while exiting 0. The same receipts
@@ -261,23 +261,36 @@ every gate:
 
 Problems 1 and 2 have their own sections above. Problems 3 and 4 follow.
 
-## Open Problem 3 (new): store names corrupted by OCR
+## Open Problem 3 (CLOSED): store names corrupted by OCR
 
-Confirmed across the sweep: `'SUPREME PHARMACY & STORI'` (truncated E) on
-several photos, `'IPREME PH\RMACY & STORI'`, `'MARTEIYE Scan & shrop'`,
-`'Sor & thop'`, `'fire'`, `'RM'`, and `'0001:3647-4'` (a transaction ref
-grabbed as the store name). Note `20260423_211452.jpg` reads
-`'SUPREME PHARMACY & STORE'` **correctly** — the same merchant, same chain,
-read correctly on one photo and wrongly on four others.
+**Closed.** The adapter now reports the right store name on all 13
+successful extractions:
 
-This matters beyond cosmetics: store name feeds `content_hash`, so
-corruption here breaks duplicate detection. This is the OCR-typo class
-earlier notes logged as a non-urgent future idea. Real data says it hits
-store names directly and deserves promotion.
+```
+MOMROTA PHARMACY (x2)        DE RHYMES SUPERMARKET (x3)
+ROTAMEDIC GRA OFFICE (x3)    Mummy Ope General (x2)
+MARTRITE SUPERSTORES (x2)    SUPREME PHARMACY & STORE
+```
 
-Fixing it likely means fuzzy matching against known merchants, or a
-spellcheck pass over recognized text. Both are engineering choices about
-accuracy, not parser bugs.
+Two separate things were wrong, and only one was a real bug.
+
+**The real bug: a short stray OCR fragment sits above the real store name.**
+`'RM'` above `'ROTAMEDIC GRA OFFICE'`, `'Sor & thop'` and
+`'MARTEIYE Scan & shrop'` above `'MARTRITE SUPERSTORES'`. The header
+heuristic took the first non-field line, so the stray won. `parse()` now
+scores the first four non-field lines on letter density, uppercase ratio and
+a saturating length term, then picks the best. It then takes the address from the
+next candidate after the winner, so a stray no longer shifts that either.
+
+**The false alarm: `'SUPREME PHARMACY & STORI'` and similar.** These came
+from reading raw single-pass OCR dumps and assuming the adapter saw the same
+text. It does not. The adapter runs OCR twice and parses whichever pass
+recovers more fields. On that receipt the raw pass reads `STORI` and the
+preprocessed pass reads `STORE`, and the preprocessed pass wins. The adapter
+was always right about this receipt.
+
+This adapter needs no merchant fuzzy-matching list. That idea rested on the
+false alarm.
 
 ## Open Problem 4 (new): the gates catch zero, never "too few"
 
@@ -306,7 +319,7 @@ discounts, where the sum legitimately differs from the total.
   receipts, committed to `tests/fixtures/`. None exist yet. Worth doing
   once real bugs stop surfacing so fast, so regressions get caught without
   needing the user's real photos every time.
-- **Debug scratch files**: `debug_sweep_incremental.py` (reusable batch
+- **Debug scripts** now live in `scripts/` (see `scripts/README.md`): `sweep_receipts.py` (reusable batch
   runner) and `debug_sweep_batch_3_6.txt` (last run's output) are still in
   the repo root, untracked. Clean up ad-hoc `debug_*.txt` dumps after
   reading them — this session left several stray ones the user had to
