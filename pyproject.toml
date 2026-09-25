@@ -11,6 +11,13 @@ dependencies = [
     "pydantic>=2.9",
     "fastapi>=0.115",
     "uvicorn>=0.31",
+    "rapidocr>=3.9.2",
+    "onnxruntime>=1.30.0",
+    "opencv-python-headless>=5.0.0.93",
+    "numpy>=2.5.3",
+    "azure-ai-documentintelligence>=1.0.2",
+    "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.3",
 ]
 
 [dependency-groups]
@@ -43,6 +50,20 @@ exclude = [
     "**/.*",
 ]
 typeCheckingMode = "strict"
+# pytesseract and the Azure SDK ship without full inline/stub type coverage,
+# which strict mode otherwise flags at every call site into those libraries.
+# The adapters that wrap them narrow return values explicitly where it's
+# feasible; the rest is inherent to depending on unstubbed third-party code.
+reportMissingTypeStubs = false
+
+[[tool.pyright.executionEnvironments]]
+root = "src/etl/extract/adapters"
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+
+[[tool.pyright.executionEnvironments]]
+root = "."
 
 [tool.poe.tasks]
 "submodule:init" = "git submodule update --init --recursive"
