@@ -283,3 +283,47 @@ def test_extract_synthesizes_different_refs_for_different_line_items():
         result_a.candidate.receipt.transaction_ref
         != result_b.candidate.receipt.transaction_ref
     )
+
+
+def _content_only_field(content: str) -> DocumentField:
+    """A field Azure returned with no typed value, only raw OCR content.
+    `_value()` falls back to that content, so it can be any string at all."""
+    return DocumentField(type=DocumentFieldType.STRING, confidence=0.9, content=content)
+
+
+def test_extract_returns_review_when_the_date_is_unparseable():
+    """Regression, from a live sweep of 28 real receipts: Azure returned a
+    TransactionDate whose only value was the raw OCR fragment "6\n0\n26".
+    The field was present, so the existing guard passed, and CandidateReceipt
+    then raised a pydantic ValidationError. The Extractor Protocol requires
+    an ExtractionReview instead of an exception."""
+    fields = {
+        "MerchantName": _string_field("Corner Store"),
+        "TransactionDate": _content_only_field("6\n0\n26"),
+        "Total": _number_field(500.0),
+    }
+    adapter = _adapter_with_mocked_client(_mock_analyze_result(fields))
+
+    result = adapter.extract(b"image-bytes")
+
+    assert isinstance(result, ExtractionReview)
+    assert result.flagged_reason == FlaggedReason.extraction_failed
+
+
+def test_extract_survives_a_money_field_that_is_not_a_number():
+    """Regression, from the same live sweep: Azure returned a bare currency
+    sign as a money field's content. float() raised a ValueError and crashed
+    the whole extraction. An unusable amount now reads as missing."""
+    fields = {
+        "MerchantName": _string_field("Corner Store"),
+        "TransactionDate": _date_field(date(2026, 6, 6)),
+        "Total": _number_field(500.0),
+        "Subtotal": _content_only_field("\u20a6"),
+    }
+    adapter = _adapter_with_mocked_client(_mock_analyze_result(fields))
+
+    result = adapter.extract(b"image-bytes")
+
+    assert isinstance(result, ExtractionResult)
+    assert result.candidate.receipt.subtotal is None
+    assert result.candidate.receipt.total == 500.0

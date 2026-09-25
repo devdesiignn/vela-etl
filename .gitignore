@@ -31,3 +31,5 @@ build/
 
 # Debug sweep outputs from scripts/sweep_receipts.py
 debug_sweep_batch_*.txt
+
+debug_sweep_azure_*.txt

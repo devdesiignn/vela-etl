@@ -31,6 +31,7 @@ gaps:
 from __future__ import annotations
 
 import hashlib
+from datetime import date, datetime
 from io import BytesIO
 from typing import Any
 from uuid import UUID, uuid4
@@ -96,8 +97,16 @@ class AzureDocumentIntelligenceAdapter:
             return self._failure_review("Azure returned no documents for this image")
 
         fields = result.documents[0].fields or {}
-        if _value(fields.get("TransactionDate")) is None:
-            return self._failure_review("Azure returned no TransactionDate field")
+        # A present TransactionDate field is not the same as a usable date.
+        # `_value()` falls back to the field's raw `content` string when
+        # Azure reports no typed value, and one real receipt returned a
+        # newline-separated fragment that way. CandidateReceipt then raised
+        # a pydantic ValidationError, which breaks the Extractor Protocol's
+        # promise to return an ExtractionReview rather than raise.
+        if _date(_value(fields.get("TransactionDate"))) is None:
+            return self._failure_review(
+                "Azure returned no usable TransactionDate for this image"
+            )
 
         return self._to_extraction_result(fields)
 
@@ -141,6 +150,41 @@ def _value(field: DocumentField | None) -> Any:
                 return getattr(value, "amount", None)
             return value
     return getattr(field, "content", None)
+
+
+def _date(value: Any) -> date | None:
+    """Coerces a field value to a date, or None when it is not one. Guards
+    the same raw-`content` fallback that `_number()` guards."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _number(value: Any) -> float | None:
+    """Coerces a field value to a float, or None when it is not numeric.
+
+    `_value()` falls back to a field's raw `content` string when Azure
+    reports no typed value, so a money field can arrive as un-parseable OCR
+    text. Confirmed against a real receipt: one returned a bare currency
+    sign, "₦", which `float()` raised a ValueError on and crashed the
+    whole extraction. The Extractor Protocol requires an ExtractionReview
+    instead of an exception, so an unusable value becomes None here and the
+    caller treats the field as missing."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _confidence(field: DocumentField | None) -> float:
@@ -193,11 +237,12 @@ def _extract_line_items(
         unit_price = _value(item_fields.get("Price"))
         line_total = _value(item_fields.get("TotalPrice"))
 
-        quantity_float = float(quantity) if quantity is not None else 1.0
-        line_total_float = float(line_total) if line_total is not None else 0.0
+        quantity_float = _number(quantity) or 1.0
+        line_total_float = _number(line_total) or 0.0
 
-        if unit_price is not None:
-            unit_price_float = float(unit_price)
+        unit_price_number = _number(unit_price)
+        if unit_price_number is not None:
+            unit_price_float = unit_price_number
             unit_price_confidence = _confidence(item_fields.get("Price"))
         elif quantity is not None and quantity_float != 0:
             unit_price_float = round(line_total_float / quantity_float, 2)
@@ -261,7 +306,11 @@ def _synthesize_transaction_ref(line_items: list[CandidateLineItem]) -> str:
 def _extract_receipt(
     fields: dict[str, DocumentField], line_items: list[CandidateLineItem]
 ) -> tuple[CandidateReceipt, dict[str, float]]:
-    transaction_date = _value(fields.get("TransactionDate"))
+    transaction_date = _date(_value(fields.get("TransactionDate")))
+    # extract() rejects an unusable date before it calls this, so by here the
+    # coercion always succeeds. CandidateReceipt.date is non-optional and has
+    # no sentinel for a missing date.
+    assert transaction_date is not None
     transaction_time = _value(fields.get("TransactionTime"))
     subtotal = _value(fields.get("Subtotal"))
     tax = _value(fields.get("TotalTax"))
@@ -272,9 +321,9 @@ def _extract_receipt(
         transaction_ref=_synthesize_transaction_ref(line_items),
         date=transaction_date,
         time=transaction_time,
-        subtotal=float(subtotal) if subtotal is not None else None,
-        vat=float(tax) if tax is not None else None,
-        total=float(total) if total is not None else 0.0,
+        subtotal=_number(subtotal),
+        vat=_number(tax),
+        total=_number(total) or 0.0,
         line_items=line_items or None,
     )
     confidence = confidence_map(
